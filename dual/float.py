@@ -6,6 +6,8 @@ from typing import SupportsFloat, SupportsIndex
 
 from hypothesis.strategies import floats, builds
 
+MaybeFloat = SupportsFloat | SupportsIndex | str | bytes | bytearray
+
 
 class dual:
     """
@@ -27,8 +29,8 @@ class dual:
 
     def __init__(
         self,
-        real: SupportsFloat | SupportsIndex | str | bytes | bytearray,
-        derivative: SupportsFloat | SupportsIndex | str | bytes | bytearray = 1.0,
+        real: float | MaybeFloat,
+        derivative: float | MaybeFloat = 0.0,
     ) -> None:
 
         # note nan and inf will have the same meaning as for float
@@ -45,8 +47,11 @@ class dual:
         if isinstance(other, dual):
             # identification
             return self.real == other.real and self.derivative == other.derivative
+        elif isinstance(other, float | str | bytes | bytearray):
+            # implicit conversion and recurse
+            return dual(other) == self
         else:
-            RuntimeError(f"{other} is not a dual. Ambiguous comparison with {self}.")
+            RuntimeError(f"{other} is not comparable to a dual number")
 
     def __setattr__(self, name, value):
         """
@@ -71,17 +76,27 @@ class dual:
         deriv_repr = " ε " if self.derivative == 1.0 else f" ε {self.derivative}"
         return "(" + real_repr + deriv_repr + ")"
 
-    def __add__(self, other: dual):
-        return dual(self.real + other.real, self.derivative + other.derivative)
+    def __add__(self, other: dual | MaybeFloat):
+        if isinstance(other, dual):
+            return dual(self.real + other.real, self.derivative + other.derivative)
+        else:
+            return self.__add__(dual(other))
 
-    def __sub__(self, other: dual):
-        return dual(self.real - other.real, self.derivative - other.derivative)
+    def __sub__(self, other: dual | MaybeFloat):
+        if isinstance(other, dual):
+            return dual(self.real - other.real, self.derivative - other.derivative)
+        else:
+            return self.__sub__(dual(other))
 
-    def __mul__(self, other: dual):
-        return dual(
-            self.real * other.real,
-            self.real * other.derivative + other.real * self.derivative,
-        )
+    def __mul__(self, other: dual | MaybeFloat):
+        if isinstance(other, dual):
+
+            return dual(
+                self.real * other.real,
+                self.real * other.derivative + other.real * self.derivative,
+            )
+        else:
+            return self.__mul__(dual(other))
 
 
 def isnan(d: dual) -> bool:
@@ -149,9 +164,27 @@ class TestDualFloat(unittest.TestCase):
             self.assertTrue(isnan(d1) and isnan(d2))
         else:
             self.assertEqual(d1, d2, f"{d1} != {d2}")
-            # expected for a usual class instance but we can do better here...
-            # TODO: cache instance since they are immutables ?
-            self.assertFalse(d1 is d2, f"{d1} is {d2}")
+
+        # expected for a usual class instance but we can do better here...
+        # TODO: cache instance since they are immutables ?
+        self.assertFalse(d1 is d2, f"{d1} is {d2}")
+
+    @given(r=floats(), d=floats())
+    def test_eq_float(self, r: float, d: float):
+        dn = dual(r, d)
+        f = r
+
+        # if one is nan, the other as well
+        if math.isnan(f) or isnan(dn):
+            # either real or derivative part is nan
+            self.assertTrue(math.isnan(f) or math.isnan(d))
+        elif dn.derivative == 0.0:
+            self.assertEqual(f, dn, f"{f} != {dn}")
+        else:
+            self.assertNotEqual(f, dn, f"{f} == {dn}")
+
+        # this should always be the case, because of the implicit conversion
+        self.assertFalse(dn is f, f"{dn} is {f}")
 
     @given(
         r=floats(),
@@ -185,6 +218,21 @@ class TestDualFloat(unittest.TestCase):
         else:
             self.assertTrue(math.isnan(d1.derivative + d2.derivative))
 
+    @given(dn=dual.strategy(), f=floats())
+    def test_add_float(self, dn: dual, f: float):
+        s = dn + f
+
+        # CAREFUL: nan != nan
+        if not math.isnan(s.real):
+            self.assertEqual(s.real, dn.real + f, f"real = {s.real}")
+        else:
+            self.assertTrue(math.isnan(dn.real + f))
+
+        if not math.isnan(s.derivative):
+            self.assertEqual(s.derivative, dn.derivative, f"derivative = {s.derivative}")
+        else:
+            self.assertTrue(math.isnan(dn.derivative))
+
     @given(d1=dual.strategy(), d2=dual.strategy())
     def test_sub(self, d1, d2):
         s = d1 - d2
@@ -199,6 +247,21 @@ class TestDualFloat(unittest.TestCase):
             self.assertEqual(s.derivative, d1.derivative - d2.derivative, f"derivative = {s.derivative}")
         else:
             self.assertTrue(math.isnan(d1.derivative - d2.derivative))
+
+    @given(dn=dual.strategy(), f=floats())
+    def test_sub_float(self, dn, f):
+        s = dn - f
+
+        # CAREFUL: nan != nan
+        if not math.isnan(s.real):
+            self.assertEqual(s.real, dn.real - f, f"real = {s.real}")
+        else:
+            self.assertTrue(math.isnan(dn.real - f))
+
+        if not math.isnan(s.derivative):
+            self.assertEqual(s.derivative, dn.derivative, f"derivative = {s.derivative}")
+        else:
+            self.assertTrue(math.isnan(dn.derivative))
 
     @given(d1=dual.strategy(), d2=dual.strategy())
     def test_mult(self, d1, d2):
@@ -215,6 +278,22 @@ class TestDualFloat(unittest.TestCase):
         else:
             self.assertTrue(math.isnan(d1.real * d2.derivative + d2.real * d1.derivative))
 
+    @given(dn=dual.strategy(), f=floats())
+    def test_mult_float(self, dn, f):
+        p = dn * f
+
+        # CAREFUL: nan != nan
+        if not math.isnan(p.real):
+            self.assertEqual(p.real, dn.real * f, f"real = {p.real}")
+        else:
+            self.assertTrue(math.isnan(dn.real * f))
+
+        if not math.isnan(p.derivative):
+            self.assertEqual(p.derivative, f * dn.derivative, f"derivative = {p.derivative}")
+        else:
+            # special case : dn has inf or nan as real part
+            self.assertTrue(math.isnan(f * dn.derivative) or math.isinf(dn.real) or math.isnan(dn.real))
+
     @given(dual.strategy())
     def test_isnan(self, d):
         if isnan(d):
@@ -227,7 +306,7 @@ if __name__ == "__main__":
     import sys
     from mypy import api
 
-    result = api.run([__file__])
+    result = api.run([__file__, "--warn-unreachable"])
 
     if result[0]:
         print("\nType checking report:\n")
