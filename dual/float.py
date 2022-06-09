@@ -4,6 +4,8 @@ from typing import SupportsFloat, SupportsIndex
 """ Implementing dual number as an extension to float numbers """
 
 
+from hypothesis.strategies import floats, builds
+
 class dual:
     """
     Dual number based on float data type
@@ -14,6 +16,11 @@ class dual:
     # helping mypy
     real: float
     derivative: float
+
+    @staticmethod
+    def strategy(real = floats(allow_nan=False, allow_infinity=False),
+                 derivative = floats(allow_nan=False, allow_infinity=False)):
+        return builds(dual, real=real, derivative=derivative)
 
     @staticmethod
     def float_conversion(x: SupportsFloat | SupportsIndex | str | bytes | bytearray):
@@ -36,13 +43,16 @@ class dual:
         object.__setattr__(self, "real", dual.float_conversion(real))
         object.__setattr__(self, "derivative", dual.float_conversion(derivative))
 
-    def __eq__(self, other):
+    def __eq__(self, other: object):
         # definitional
         if id(self) == id(other):
             return True
 
-        # identification
-        return hash(self) == hash(other)
+        if isinstance(other, dual):
+            # identification
+            return hash(self) == hash(other)
+        else:
+            RuntimeError(f"{other} is not a dual. Ambiguous comparison with {self}.")
 
     def __setattr__(self, name, value):
         """
@@ -68,6 +78,12 @@ class dual:
         deriv_repr = " ε " if self.derivative == 1.0 else f" ε {self.derivative}"
         return "(" + real_repr + deriv_repr + ")"
 
+    def __add__(self, other: dual):
+        return dual(self.real + other.real, self.derivative + other.derivative)
+
+    def __sub__(self, other: dual):
+        return dual(self.real - other.real, self.derivative - other.derivative)
+
 
 import unittest
 from hypothesis import given
@@ -81,8 +97,8 @@ class TestDualFloat(unittest.TestCase):
     )
     def test_init(self, r: float, d: float):
         dn = dual(r, d)
-        assert dn.real == r, f"{dn} has a real part of {dn.real}"
-        assert dn.derivative == d, f"{dn} has a derivative part of {dn.derivative}"
+        self.assertEqual(dn.real, r, f"{dn} has a real part of {dn.real}")
+        self.assertEqual(dn.derivative, d, f"{dn} has a derivative part of {dn.derivative}")
 
     @given(
         r=floats(allow_nan=False, allow_infinity=False),
@@ -96,11 +112,11 @@ class TestDualFloat(unittest.TestCase):
         assert hash(dn) == hash(dual(r, d))
 
         # verify it is immutable so previously computed hash is always correct
-        with self.assertRaises(AttributeError):
+        with self.assertRaises(AttributeError, msg="dual.real is immutable") as cm:
             dn.real = 42
-        with self.assertRaises(AttributeError):
+        with self.assertRaises(AttributeError, msg="dual.derivative is immutable") as cm:
             dn.derivative = 42
-        with self.assertRaises(AttributeError):
+        with self.assertRaises(AttributeError, msg="dual has no attribute something") as cm:
             dn.something = 42
 
     @given(
@@ -137,18 +153,18 @@ class TestDualFloat(unittest.TestCase):
     #     tdb = dual(53)
     #     assert (td * tdb).real == 42*53
     #     assert (td * tdb).derivative == 42+53
-    #
-    # def test_add(self):
-    #     td = Dual.Impl(42)
-    #     tdb = Dual.Impl(53)
-    #     assert (td + tdb).real == 42+53
-    #     assert (td+tdb).derivative == 2
-    #
-    # def test_sub(self):
-    #     td = Dual.Impl(42)
-    #     tdb = Dual.Impl(53)
-    #     assert (td - tdb).real == 42-53
-    #     assert (td-tdb).derivative == 0
+
+    @given(d1=dual.strategy(), d2=dual.strategy())
+    def test_add(self, d1, d2):
+        s = d1 + d2
+        assert s.real == d1.real + d2.real
+        assert s.derivative == d1.derivative + d2.derivative
+
+    @given(d1=dual.strategy(), d2=dual.strategy())
+    def test_sub(self, d1, d2):
+        s = d1 - d2
+        assert s.real == d1.real - d2.real
+        assert s.derivative == d1.derivative - d2.derivative
 
 
 if __name__ == "__main__":
