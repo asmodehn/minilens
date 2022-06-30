@@ -13,7 +13,7 @@ Along the way you will gain a deep understanding of how programming and computer
 
 Take your favorite language and implement [Unlambda](http://www.madore.org/~david/programs/unlambda)
 
-Beside the usual combinators (IKCWB -in order- might be simpler to implement than SKI at first), for which rules are easily found and implementable, one tricky part seem to be "'" which is effectively a structural character (representing "(" and ")" implicitely) along with a call/cc semantics: it evaluates the next combinator.
+Beside the usual combinators (IKWCB -in order- might be simpler to implement than SKI at first), for which rules are easily found and implementable, one tricky part seem to be "`" which is effectively a structural character (representing "(" and ")" implicitely) along with a call/cc semantics: it evaluates the next combinator.
 
 If implementing it in a functional language with continuation, mapping unlambda semantics to the host language might relatively straight forward.
 
@@ -23,18 +23,26 @@ A good resource on how to understand and implement continuations is [Categorical
 
 With the same idea of preparing for a very imperative minimal implementation, relying on stacks instead of function params and returns might expose some interesting structure.
 Therefore each partial application consumes the input to produce a continuation Just-In-Time (no waiting to have all params)
-However this makes it harder to test, and should probably be implemented towards the end...
+However this makes it harder to test, and should probably be implemented after getting a simpler version working...
 
 The implementation in your language of choice can be simplified when carefully choosing the implementation of the main concepts to match the host language.
 Depending if this is a final goal, or just a stepping stone for another implementation (as in this document), the choices you make will be different.
 
-
 While debugging interactively your implementation, you will soon feel the need to see the stack contents pretty often.
-Luckily we planned from the beginning to design an inteeractive REPL.
+Luckily we planned from the beginning to design an interactive REPL.
 
-And having early on expressed continnuation in the language means we can pass the REPL continuations to the interpreter stack...
-TODO !
+Keeping the unnlambda approach of "one character at a time", we can see there are 3 levels of interaction/implementations:
+- char by char continuation, with single input, single output
+- char by char continuation, multiple input (closures), multiple output (generators)
+- string by string continuation, multiple input, multiple output
 
+The latter one is the only one necessary to consider when implementing unlambda in a high level language.
+However to be able to implement it in a lower level language, we feel it necessary to deep dive into the simplest implementation...
+Even when doing it in high level language, this forces us to expose the structure of the underlying computation, as well as the interaction when these are implemented along with their REPL.
+
+Roadmap:
+- Python prototype WIP
+- Julia implementation with Visual Structure (leveraging CatLab) somehow integrated in the REPL.
 
 ## Step 2: Unlambda in Forth
 
