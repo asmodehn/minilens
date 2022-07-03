@@ -1,6 +1,12 @@
+import asyncio
+import io
 from typing import Type
 
 import pytest
+from prompt_toolkit.input import create_input
+from prompt_toolkit.key_binding import KeyPress
+from prompt_toolkit.keys import Keys
+
 import yeast_0_0_2
 
 
@@ -50,7 +56,49 @@ def test_live_line_eval(b_input, b_expected):
         assert yeast_0_0_2.live_line_eval(bytearray(b_input)) == bytearray(b_expected)
 
 
-# TODO : figure out how to test the repl...
+
+@pytest.mark.parametrize("b_input, b_expected", [
+    (b'', [b'a', b'b', b'c']),  # because ` would trigger error
+    (b'a', [b'`', b'a', b'b', b'c']),  # because ` is more useful to compress the input, and we can always add more chars
+    (b'`', []),  # because ` already triggers error
+    (b'a`', [b'a', b'b', b'c'])  # because ` would trigger error
+])
+def test_live_char_expect(b_input, b_expected):
+
+    if isinstance(b_expected, type):
+        if not issubclass(b_expected, Exception):
+            raise NotImplementedError
+        with pytest.raises(b_expected):
+            yeast_0_0_2.live_char_expect(bytearray(b_input))
+    else:
+        assert yeast_0_0_2.live_char_expect(bytearray(b_input)) == b_expected
+
+
+# yeast 0.0.2 makes it possible to test interactive output !
+
+@pytest.mark.parametrize("key_press, pqueue, pqueue_expected, out_expected", [
+    (KeyPress(key='a', data='a'), bytearray(b''), bytearray(b'a'), "a"),
+    (KeyPress(key='b', data='b'), bytearray(b''), bytearray(b'b'), "b"),
+    (KeyPress(key='c', data='c'), bytearray(b''), bytearray(b'c'), "c"),
+    (KeyPress(key='`', data='`'), bytearray(b''), bytearray(b'`'), "`"),
+    (KeyPress(key=Keys.Enter), bytearray(b'`'), bytearray(b''), "\nError evaluating parameters. Reset!\n> "),
+    (KeyPress(key='a', data='a'), bytearray(b'*'), bytearray(b'*a'), 'a'),
+    (KeyPress(key='b', data='b'), bytearray(b'*'), bytearray(b'*b'), 'b'),
+    (KeyPress(key='c', data='c'), bytearray(b'*'), bytearray(b'*c'), 'c'),
+    (KeyPress(key='`', data='`'), bytearray(b'*'), bytearray(b'*`'), '`'),
+    (KeyPress(key=Keys.Enter), bytearray(b'*`'), bytearray(b''), '\n> '),  # new line eval and prints next line
+    (KeyPress(key=Keys.Enter), bytearray(b'a'), bytearray(b'a'), '\n> a'),  # new line eval and prints next line with pqueue on it
+    # KeyPress Backspace TODO
+])
+def test_live_char_tty(key_press, pqueue, pqueue_expected, out_expected):
+
+    outbuf = io.StringIO()
+    yeast_0_0_2.live_char_tty(key_press, pqueue, outbuf)
+
+    # pqueue input has been modified
+    assert pqueue == pqueue_expected
+    assert outbuf.getvalue() == out_expected
+
 
 if __name__ == '__main__':
     pytest.main(['-sv', __file__])
