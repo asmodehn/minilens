@@ -9,27 +9,13 @@ from typing import Callable, ClassVar, Dict, List, Optional, Tuple
 from prompt_toolkit import PromptSession
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.completion import Completer, Completion, ThreadedCompleter
+from prompt_toolkit.input import Input
 from prompt_toolkit.lexers import PygmentsLexer
+from prompt_toolkit.output import Output
 from prompt_toolkit.styles import Style
 from prompt_toolkit.validation import ValidationError, Validator
 from pygments.lexer import RegexLexer
 from pygments.token import Keyword, Name
-
-
-class StackUnderflow(Exception):
-    """ Specific CStack underflow exception"""
-
-    def __init__(self, snap: Snapshot, *args):
-        self.snap = snap
-        super().__init__(*args)
-
-    def __str__(self):
-        return f"StackUnderflow: {self.snap}"
-
-
-class StackOverflow(Exception):
-    """ Can happen on tiny machine, not ever likely in python"""
-    pass
 
 
 class Snapshot:
@@ -55,29 +41,84 @@ class Snapshot:
         return id(self) == id(other) or hash(self) == hash(other)
 
 
+class StackUnderflow(Exception):
+    """ Specific CStack underflow exception"""
+    snap: Snapshot
+
+    def __init__(self, snap: Snapshot, *args):
+        self.snap = snap
+        super().__init__(*args)
+
+    def __str__(self):
+        return f"StackUnderflow: {self.snap}"
+
+    def __eq__(self, other):
+        """ adding extensional equality via snapshot"""
+        return id(self) == id(other) or self.snap == other.snap
+
+
+class StackOverflow(Exception):
+    """ Can happen on tiny machine, not ever likely in python"""
+    pass
+
+
+class UnknownToken(Exception):
+    """ Specific CStack underflow exception"""
+    snap: Snapshot
+
+    def __init__(self, snap: Snapshot, *args):
+        self.snap = snap
+        super().__init__(*args)
+
+    def __str__(self):
+        return f"UnknownToken: {chr(self.snap.last_input[self.snap.cursor_position])} @ {self.snap.cursor_position}"
+
+
+# TODO : package structure to hide sensitive things in a "lower" namespace (this should not be part of the metaclass)
+# minimal inner immutable forth system
+dict_prototype: Dict[int, Callable[[bytearray, int], int | None]] = {
+    # ord(b"\n"): lambda s, c: eval(s, "all chars after c")  # TODO a way to handle \n via dict
+    # TODO : maybe some way to represent implementation in a symbolic high level way ?? continuation ???
+    ord(b"."): lambda s, _: s.pop(),  # popping (and outputting by return)
+    ord(b"a"): lambda s, c: s.append(c),
+    ord(b"b"): lambda s, c: s.append(c),
+    ord(b"c"): lambda s, c: s.append(c),
+}
+
+
+def eval(dctn: Dict[int, Callable[[bytearray, int], int | None]], stck: bytearray, astr: bytes) -> bytes:
+    """evaluates a line only. no \n present in astr or it will recurse /!\ TODO."""
+    output = bytearray()
+    # need to keep a copy of the stack as evidence in case of error
+    stack_on_eval_start = bytes(stck)
+
+    for i, b in enumerate(astr):  # extract from the queue (time sensitive -> FIFO)
+
+        # Note the content of the queue should be in reverse order already (user input)
+        # we don't drop "next" character, but the *previous* one in the stack.
+        try:
+
+            # find implementation in dctn, and run it
+            if (out := dctn[b](stck, b)) is not None:
+                output.append(out)
+
+        except IndexError as ie:  # when stack underflows (or overflows ??)
+            # raising an exception with a snapshot, where the eval can be replayed to trigger the same error
+            raise StackUnderflow(Snapshot(stack=stack_on_eval_start, last_input=astr, cursor_position=i), *ie.args) from ie
+        except KeyError as ke:  # when a token is not defined in dctn
+            raise UnknownToken(Snapshot(stack=stack_on_eval_start, last_input=astr, cursor_position=i), *ke.args) from ke
+
+    # Note: stack has been modified
+    return bytes(output)
+
+
 class MetaMachine(type):
     """
     This is a Forth MetaMachine.
-    Useful for simple definition of a Forth Machine.
-    It is the immutable part of our Forth System.
+    Useful for simple definition of a Forth Machine class/type.
     """
 
-    # minimal inner forth system
-    dict: ClassVar[Dict[int, Callable[[bytearray, int], int | None]]] = {
-        # TODO : maybe some way to represent implementation in a symbolic high level way ??
-        ord(b"."): lambda s, _: s.pop(),
-        ord(b"a"): lambda s, c: s.append(c),
-        ord(b"b"): lambda s, c: s.append(c),
-        ord(b"c"): lambda s, c: s.append(c),
-    }
-
-    def __call__(cls, initial_stack: Optional[bytes] = None):
-        inst = super(MetaMachine, cls).__call__(initial_stack)
-        # copying the initial forth dict onto the machine instance
-        inst.dict = cls.dict.copy()
-        # this guarantees that even if a machine screws up its class-wide dictionary,
-        # we can always recreate an instance with a clean dictionary.
-        return inst
+    dict: Dict[int, Callable[[bytearray, int], int | None]] = dict_prototype.copy()
 
     def __repr__(cls) -> str:
         return f"<class '{cls.__qualname__}' {{{''.join(chr(k) for k in cls.dict.keys())}}}>"
@@ -90,11 +131,22 @@ class Machine(metaclass=MetaMachine):
     a snapshot() method is provided to duplicate and freeze the state of the machine at that point in time.
     """
 
-    def __init__(self, initial_stack: Optional[bytes] = None):
+    dict: Dict[int, Callable[[bytearray, int], int | None]] = dict_prototype.copy()
+
+    def __init__(self, initial_stack: Optional[bytes] = None, *,
+        input: Optional[Input] = None,
+        output: Optional[Output] = None
+    ):
         self.stack = bytearray() if initial_stack is None else bytearray(initial_stack)
+        self.input = input
+        self.output = output
+
+    @property
+    def tokens(self) -> List[int]:
+        return list(self.dict.keys())
 
     def __repr__(self):
-        return f"<{{{''.join(chr(k) for k in self.dict.keys())}}} {self.__class__.__name__} stack: {bytes(self.stack)}>"
+        return f"<{{{''.join(chr(k) for k in self.tokens)}}} {self.__class__.__name__} stack: {bytes(self.stack)}>"
 
     def __copy__(self):
         """ forcing deepcopy. shallow copy doesn't make sense here"""
@@ -110,188 +162,146 @@ class Machine(metaclass=MetaMachine):
         """ en explicit copy() method like on mutable data structures """
         return copy.copy(self)
 
-    def __call__(self, s: bytes) -> bytes:
-        """a live eval implementation. receiving one line at a time (as a sequence of bytes)."""
-
-        self.__class__()
+    def __call__(self, astr: bytes) -> bytes:
+        """a live eval implementation. receiving one line at a time (as a sequence of bytes).
+        If a newline character is present, the eval recurse into itself,
+        to get into the correct state if exception occurs (bubble up all recursion levels)
+        """
 
         # storing output
-        output = bytearray()
+        output: List[bytes] = []
 
-        for i, b in enumerate(s):  # extract from the queue (time sensitive -> FIFO)
-
-            # Note the content of the queue should be in reverse order already (user input)
-            # we don't drop "next" character, but the *previous* one in the stack.
-            try:
-
-                # find implementation in dict, and run it
-                if (out := self.dict[b](self.stack, b)) is not None:
-                    output.append(out)
-
-            except IndexError as ie:
-                raise StackUnderflow(self.snapshot(last_input=s, cursor_position=i), *ie.args) from ie
-
-            # Note: stack has been modified
+        for seq in astr.split(b"\n"):
+            # implemented as loop. The other option is an eval recursion,
+            # which is nasty in python, or non tail-call-optimized languages
+            output.append(eval(self.dict, self.stack, seq))
+            # note the stack is modified during the loop, as simply this passes the reference to it.
 
         # return the output after evaluating this line
-        return bytes(output)
+        return b"\n".join(output)
 
     def snapshot(self, last_input: bytes, cursor_position: int):
         return Snapshot(
             stack=bytes(self.stack),  # will copy the bytearray in an immutable bytes
             last_input=last_input,
-            cursor_position = cursor_position
+            cursor_position=cursor_position
         )
 
     @property
-    def tokens(self) -> int:
-        return self.dict.keys()
+    def lexer(self) -> PygmentsLexer:
+        machine = self
 
+        class CustomLexer(RegexLexer):
+            """A basic lexer for our dummy language"""
 
+            name = "dummy"
 
-# The Machine
-machine = Machine()
+            tokens = {
+                "root": [
+                    # use different colors for different instruction types
+                    (r"[.]", Keyword),
+                    (r"[a-c]", Name),
+                ],
+            }
+        return PygmentsLexer(CustomLexer)
 
+    @property
+    def completer(self) -> Completer:
+        machine = self
 
-@functools.lru_cache
-def live_char_expect(s: bytes) -> List[bytes]:
-    """
-    smart editing that given a list of possible inputs and the current input line state,
-    will evaluate immediately and propose only non-problematic inputs.
-    sorted in order of more options later first, to more restrictive one (because life metaphysics)
+        """dynamic auto complete"""
+        class CustomCompleter(Completer):
+            def get_completions(self, document, complete_event):
+                acceptable: List[Tuple[bytes, int]] = []
 
-    This is a pure function -> should be cached, because the same sequence of bytes might be passed many times
-    """
-    possible_inputs = [b"a", b"b", b"c", b"."]
-    acceptable_inputs = []
-    forbidden_inputs = []
+                # duplicate the Machine for each possible subsequent input
+                for next_ch in machine.tokens:
+                    m = machine.copy()
 
-    for p in possible_inputs:
-        # generate a new, distinct machine from the current one.
-        # we do not want to affect the state of the current machine.
-        # TODO
-        t = bytearray(s)
-        t.append(ord(p))
+                    try:
+                        next_bytes = bytes([next_ch])
+                        r = m(bytes(document.text_before_cursor.encode("ascii")) + next_bytes)
+                    except Exception as e:
+                        pass  # ignore failures when guessing possible completions
+                    else:
+                        # storing acceptable inputs with some measure of priority
+                        acceptable.append((next_bytes, len(r)))
 
-        try:
-            r = live_line_eval(bytes(t))
-        except Exception as e:
-            forbidden_inputs.append(p)
-        else:
-            # storing acceptable inputs with some measure of priority
-            acceptable_inputs.append((p, len(r)))
+                suggest = [a[0] for a in sorted(acceptable, key=lambda t: t[1], reverse=True)]
 
-    return [a[0] for a in sorted(acceptable_inputs, key=lambda t: t[1])]
+                for s in suggest:
+                    yield Completion(s.decode("ascii"))
 
+        completer = CustomCompleter()
+        # just performance optimisation (?)
+        # completer = ThreadedCompleter(CustomCompleter())
+        return completer
 
-# global pstack as a global state, since prompt doesn't allow to prefill text via a parameter
-# Note: The pstack is kept between lines, but reset for each session...
-pstack = bytearray()
+    @property
+    def validator(self) -> Validator:
+        machine = self
 
+        class CustomValidator(Validator):
+            def validate(self, document):
 
-class CustomLexer(RegexLexer):
-    """A basic lexer for our dummy language"""
+                # duplicate the machine, as we dont want the validator to modify the current state
+                m = machine.copy()
 
-    name = "dummy"
+                whole_text = bytes(document.text.encode("ascii"))
+                try:
+                    m(whole_text)
+                except Exception as e:
 
-    tokens = {
-        "root": [
-            # use different colors for different instruction types
-            (r"[.]+", Keyword),
-            (r"[a-z]+", Name),
-        ],
-    }
+                    message = f"{type(e).__name__}: {e}"
 
+                    # attempt to find index of the last valid sequence of char
+                    b = 1
+                    # TODO : BackMachine ?? anyway the cursor position doesnt seem to work at the moment..
+                    # for b in range(1, len(whole_text)):
+                    #     partial_text = whole_text[:-b]
+                    #     try:
+                    #         live_line_eval(partial_text)
+                    #     except Exception as e:
+                    #         continue  # text still invalid
+                    #     else:
+                    #         break  # found a valid text
 
-# dynamic auto complete
-class CustomCompleter(Completer):
-    def get_completions(self, document, complete_event):
-        acceptable = []
+                    raise ValidationError(
+                        message=str(e),
+                        # BUG : doesnt work ?
+                        cursor_position=0,
+                    )
+        return CustomValidator()
 
-        # duplicate the Machine for each possible subsequent input
-        for next_ch in machine.tokens:
-            m = machine.copy()
+    def prompt_session(self, **kwargs):
 
-            try:
-                r = m(bytes(document.text_before_cursor.encode("ascii")) + bytes(next_ch))
-            except Exception as e:
-                pass  # ignore failures when guessing possible completions
-            else:
-                # storing acceptable inputs with some measure of priority
-                acceptable.append((next_ch, len(r)))
+        style = Style.from_dict(
+            {
+            }
+        )
 
-        suggest = [a[0] for a in sorted(acceptable, key=lambda t: t[1])]
-
-        for s in suggest:
-            yield Completion(s.decode("ascii"))
-
-
-class CustomValidator(Validator):
-    def validate(self, document):
-
-        # duplicate the machine, as we dont want the validator to modify the current state
-        m = machine.copy()
-
-        whole_text = bytes(document.text.encode("ascii"))
-        try:
-            m(whole_text)
-        except Exception as e:
-
-            message = f"{type(e).__name__}: {e}"
-
-            # attempt to find index of the last valid sequence of char
-            b = 1
-            # TODO : BackMachine ?? anyway the cursor possition doesnt seem to work at teh moment..
-            # for b in range(1, len(whole_text)):
-            #     partial_text = whole_text[:-b]
-            #     try:
-            #         live_line_eval(partial_text)
-            #     except Exception as e:
-            #         continue  # text still invalid
-            #     else:
-            #         break  # found a valid text
-
-            raise ValidationError(
-                message=message,
-                # BUG : doesnt work ?
-                cursor_position=0,
-            )
-
-
-def session(**kwargs):
-
-    lexer = PygmentsLexer(CustomLexer)
-
-    # completer = CustomCompleter()
-    # just performance optimisation
-    completer = ThreadedCompleter(CustomCompleter())
-
-    validator = CustomValidator()
-
-    style = Style.from_dict(
-        {
-        }
-    )
-
-    return PromptSession(
-        message="> " + pstack.decode("ascii"),
-        lexer=lexer,
-        auto_suggest=AutoSuggestFromHistory(),
-        enable_history_search=False,
-        completer=completer,
-        complete_while_typing=True,
-        validator=validator,
-        validate_while_typing=True,
-        style=style,
-        wrap_lines=False,
-        **kwargs,
-    )
+        return PromptSession(
+            message="> ",
+            lexer=self.lexer,
+            auto_suggest=AutoSuggestFromHistory(),
+            enable_history_search=False,
+            completer=self.completer,
+            complete_while_typing=True,
+            validator=self.validator,
+            validate_while_typing=True,
+            style=style,
+            wrap_lines=False,
+            input=self.input,
+            output=self.output,
+            **kwargs,
+        )
 
 
 # Known issue about completion on backspace : https://github.com/prompt-toolkit/python-prompt-toolkit/issues/491
 
 
-def repl(session: PromptSession):
+def repl(machine: Machine):
+    session = machine.prompt_session()
 
     while True:
         print(f"< {machine.stack.decode('ascii')}")
@@ -303,13 +313,14 @@ def repl(session: PromptSession):
             break  # Control-D pressed.
 
         try:
-            # modify pstack
+            # modify machine stack
             out = machine(text.encode("ascii"))
 
             # printing output
             print(out)
 
         except IndexError as ie:
+            # ideally validation is good enough that we never reach here...
             print("Error evaluating parameters. Reset!\n> ")
         except Exception as e:
             print(repr(e))
@@ -318,4 +329,4 @@ def repl(session: PromptSession):
 
 
 if __name__ == "__main__":
-    repl(session())
+    repl(Machine())

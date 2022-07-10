@@ -30,33 +30,42 @@ def test_snapshot():
         snap.cursor_position = 42
 
 
-def test_metamachine_dict():
+@pytest.mark.parametrize("dict, init_stack, input, output, end_stack",[
+    (hexaforth_0_1.dict_prototype, b"", b"abc", b"", b"abc"),
+    (hexaforth_0_1.dict_prototype, b"", b".a", hexaforth_0_1.StackUnderflow, b""),
+        (hexaforth_0_1.dict_prototype, b"", b"b.a", b"b", b"a"),
+        (hexaforth_0_1.dict_prototype, b"", b"a.b.", b"ab", b""),
+        (hexaforth_0_1.dict_prototype, b"", b"ab..", b"ba", b""),
+        (hexaforth_0_1.dict_prototype, b"", b"ab.", b"b", b"a"),
+        (hexaforth_0_1.dict_prototype, b"", b"...", hexaforth_0_1.StackUnderflow, b""),
+    ])
+def test_eval(dict, init_stack, input, output, end_stack):
+    # prepare the stack
+    stack = bytearray(init_stack)
 
-    class CustomMachine(metaclass=hexaforth_0_1.MetaMachine):
+    # check the output
+    if isinstance(output, type) and issubclass(output, Exception):
+        if output is not hexaforth_0_1.StackUnderflow:
+            raise NotImplementedError
+        with pytest.raises(output) as first_error:
+            hexaforth_0_1.eval(dctn=dict, stck=stack, astr=input)
 
-        def __init__(self, initial_stack: Optional[bytes] = None):
-            self.stack = bytearray() if initial_stack is None else bytearray(initial_stack)
+        retry_stack = bytearray(first_error.value.snap.stack)
+        retry_input = first_error.value.snap.last_input
+        # on error, a replay from snapshot data is enough to simulate again if needed
 
+        with pytest.raises(output) as second_error:
+            hexaforth_0_1.eval(dctn=dict, stck=retry_stack, astr=retry_input)
 
-    # instantiate a machine with its own stack
-    machine1 = CustomMachine()
-    machine2 = CustomMachine()
+        assert second_error.value == first_error.value  # exact same error in the exact same way
+        # except for the local traceback in this test which shows the exact same information
+        # even if inside python it's 2 execution -> actual traceback entries are different
+        assert all(str(stb) == str(ftb) for stb in second_error.traceback[1:] for ftb in first_error.traceback[1:])
+    else:
+        assert hexaforth_0_1.eval(dctn=dict, stck=stack, astr=input) == output
 
-    # verify we have a dictionnary initialized properly, the same in machine1 and machine2
-    assert machine1.dict == machine2.dict
-    assert len(machine1.dict) == len(machine2.dict) == 4
-
-    # it is not shared and each instance can mutate it
-    topop = [k for k in machine1.dict.keys()]
-    for k in topop:
-        machine1.dict.pop(k)
-
-    assert len(machine1.dict) == 0
-    assert len(machine2.dict) == 4
-
-    # but new machines will get a clean new dict
-    machine3 = CustomMachine()
-    assert machine3.dict == machine2.dict
+    # check the stack
+    assert bytes(stack) == end_stack
 
 
 def test_metamachine_repr():
@@ -183,36 +192,60 @@ def test_machine_copy():
     assert mc.stack == machine.stack
 
 
-
-
+# TODO : find a way to test pygment lexer...
 
 
 @pytest.mark.parametrize(
-    "b_input, b_expected",
+    "input, expected_completions",
     [
-        (b"", [b"a", b"b", b"c"]),  # because ` would trigger error
-        (
-            b"a",
-            [b".", b"a", b"b", b"c"],
-        ),  # because ` is more useful to compress the input, and we can always add more chars
-        (b".", []),  # because ` already triggers error
-        (b"a.", [b"a", b"b", b"c"]),  # because ` would trigger error
+        ("a", [".", "a", "b", "c"]),
+        ("cba", [".", "a", "b", "c"]),
+        (".", []),  # error means no completions (but error ignored in completer)
+        ("cba...", ["a", "b", "c"]),
     ],
 )
-def test_live_char_expect(b_input, b_expected):
+def test_machine_completer(input, expected_completions):
 
-    if isinstance(b_expected, type):
-        if not issubclass(b_expected, Exception):
-            raise NotImplementedError
-        with pytest.raises(b_expected):
-            hexaforth_0_1.live_char_expect(b_input)
+    m = hexaforth_0_1.Machine()
+
+    # testing completer for this input (including ordering !)
+    assert expected_completions == [
+        comp.text
+        for comp in m.completer.get_completions(
+            Document(input, cursor_position=len(input)), "unused_complete_event"
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "input, expected_validation",
+    [
+        ("a",  None),
+        ("cba",  None),
+        (".", ValidationError(message="StackUnderflow: b'' > b'.' @ 0")),
+        ("cba...", None),
+        ("cba....", ValidationError(message="StackUnderflow: b'' > b'cba....' @ 6")),
+    ],
+)
+def test_machine_validator(input, expected_validation):
+
+    m=hexaforth_0_1.Machine()
+
+    if expected_validation is None:
+        assert m.validator.validate(
+            Document(input, cursor_position=len(input))
+        ) is None
     else:
-        assert hexaforth_0_1.live_char_expect(b_input) == b_expected
+        with pytest.raises(type(expected_validation)) as raised:
+            m.validator.validate(
+                Document(input, cursor_position=len(input))
+            )
+        assert raised.value.args == expected_validation.args
 
 
 # We can now test the prompt session
-from prompt_toolkit.input import create_pipe_input
-from prompt_toolkit.output import DummyOutput
+from prompt_toolkit.input import Input, create_pipe_input
+from prompt_toolkit.output import DummyOutput, Output
 
 
 @pytest.mark.parametrize(
@@ -220,51 +253,43 @@ from prompt_toolkit.output import DummyOutput
     [
         ("a", [".", "a", "b", "c"], None),
         ("cba", [".", "a", "b", "c"], None),
-        (".", [], ValidationError(message="CStackUnderflow: pop from empty bytearray")),
+        (".", [], ValidationError(message="StackUnderflow: b'' > b'.' @ 0")),
         ("cba...", ["a", "b", "c"], None),
-        ("cba....", [], ValidationError(message="CStackUnderflow: pop from empty bytearray")),
+        ("cba....", [], ValidationError(message="StackUnderflow: b'' > b'cba....' @ 6")),
+        ("cb\na", [".", "a", "b", "c"], None),  # validating that \n in bytes is supported in test
+        ("cb\na....", [], ValidationError(message="StackUnderflow: b'cb' > b'a....' @ 4")),
     ],
 )
 def test_prompt_session(input, expected_completions, expected_validation):
     with create_pipe_input() as inp:
 
-        yeast_session = hexaforth_0_1.session(
+        m = hexaforth_0_1.Machine(
             input=inp,
-            output=DummyOutput(),
+            output=DummyOutput()
         )
 
-        # testing validation for this input
-        if isinstance(expected_validation, Exception):
+        yeast_session = m.prompt_session()
+
+        if expected_validation is None:
+            assert yeast_session.validator.validate(
+                Document(input, cursor_position=len(input))
+            ) is None
+
+            # split input into multiple prompt calls if needed, simulating user interactivity
+            for snip in input.split("\n"):
+                # Only actually send text when valid (otherwise prompt never terminates)
+                inp.send_text(snip + "\n")  # forcing \n to get result
+                result = yeast_session.prompt()
+
+                assert result == snip  # no direct modification of the input by prompt(), only consumption of the last "\n"
+
+        else:
+            # verify validation is correct (no input possible). Note this also includes "interpreting" newlines.
             with pytest.raises(type(expected_validation)) as raised:
                 yeast_session.validator.validate(
                     Document(input, cursor_position=len(input))
                 )
             assert raised.value.args == expected_validation.args
-            assert list(yeast_session.completer.get_completions(
-                    Document(input, cursor_position=len(input)), "unused_complete_event"
-                )) == expected_completions
-
-        elif expected_validation is None:
-            assert yeast_session.validator.validate(
-                Document(input, cursor_position=len(input))
-            ) is None
-
-            # testing completer for this input (including ordering !)
-            assert expected_completions == [
-                comp.text
-                for comp in yeast_session.completer.get_completions(
-                    Document(input, cursor_position=len(input)), "unused_complete_event"
-                )
-            ]
-
-            # Only actually send text when valid (otherwise prompt never terminates)
-            inp.send_text(input + "\n")  # forcing \n to get result
-            result = yeast_session.prompt()
-
-            assert result == input  # no direct modification of the input
-
-        else:
-            raise NotImplementedError
 
 
 if __name__ == "__main__":
