@@ -9,9 +9,9 @@ Here we attempt to follow the structure of human produced texts where suitable a
 """
 
 
-def chars(input: Callable[[], int], limiters):
+def chars(input: Callable[[], int], until: List[int]):
     try:
-        while (ch := input()) not in limiters:
+        while (ch := input()) not in until:
             yield ch
         yield ch  # last yield to return limiter and terminate generator
     except StopIteration as si:
@@ -19,8 +19,8 @@ def chars(input: Callable[[], int], limiters):
 
 
 # TODO : same but lazy ? iterator ?
-def word_transform(w: List[Char]) -> List[Char]:
-    return [Char(c) for c in str(len(w))]
+# def word_transform(w: List[Char]) -> List[Char]:
+#     return [Char(c) for c in str(len(w))]
 
 
 @contextlib.contextmanager
@@ -47,21 +47,16 @@ class Word:
         # Note: a higher level limiter implies this limiter
         self.limiters = limiters + [self.EOW]
 
-    def __eq__(self, other: Word):
-        return self.buffer == other.buffer
-
-    # TODO : async
-    def __call__(self, input: Generator[int, None, None]) -> Word:
-        """ async generator for input : one char at a time, asynchronously."""
-
-        for ch in input:
-            if ch == self.EOW:
-                break  # end of word input
-            self.buffer.append(ch)
-            # last char is not appended to buffer
-            # unless it is not Word limiter
-
-        return self
+    def __eq__(self, other: Word | str | bytes):
+        if isinstance(other, Word):
+            return self.buffer == other.buffer
+        # otherwise, we use self conversions to check for equality in other's type
+        elif isinstance(other, str):
+            return str(self) == str
+        elif isinstance(other, bytes):
+            return bytes(self.buffer) == other
+        else:
+            raise NotImplementedError
 
     def __iter__(self) -> Generator[int, None, None]:
         """ input word and copy into screen.
@@ -69,6 +64,23 @@ class Word:
         """
 
         yield from self.buffer
+
+    # TODO : async
+    def __call__(self, input: Callable[[], int]) -> Word:
+        """ async generator for input : one char at a time, asynchronously."""
+
+        while len(self.buffer) == 0:  # preventing empty (meaningless) word
+            for ch in chars(input, until=self.limiters):
+                if ch == self.EOW:
+                    break  # end of word input
+                # last char is not appended to buffer
+                # unless it is not Word limiter
+                self.buffer.append(ch)
+
+        return self
+
+    def __str__(self) -> str:
+        return self.buffer.decode("ascii")
 
 #
 # @contextlib.contextmanager
@@ -281,13 +293,13 @@ if __name__ == "__main__":
 
     with CursesUI() as cui:
 
-        def reflect():  # immediately output inputted char
+        def input_refl():  # immediately output inputted char
             ch = cui.stdscr.getch()
             cui.stdscr.addch(ch)
             return ch
 
         while True:
-            w = cui.word(chars(reflect, limiters=[b"\0"]))
-            print(w)
+            w = cui.word(input_refl)
+            # print("\n" + str(w))
         # do global stuff
 
