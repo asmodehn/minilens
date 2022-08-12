@@ -74,8 +74,9 @@ class Pipeline(Generic[T]):
     def filterfalse(self, pred) -> None:
         self.gen = filterfalse(pred, self.gen)
 
-    def starmap(self, fun) -> None:
-        self.gen = starmap(fun, self.gen)
+    def map(self, fun: Callable[[T], T]) -> None:
+        args = ((e, ) for e in self.gen)  # make a tuple
+        self.gen = starmap(fun, args)  # TODO : generic starmap wrapper in pipeline ??
 
     def __mul__(self, other: Pipeline) -> Pipeline:
         return Pipeline(source=product(self.gen, other.gen))
@@ -85,6 +86,13 @@ class Pipeline(Generic[T]):
         self.gen, *new_ones = tee(self.gen, n)
         return [Pipeline(source=n) for n in new_ones]
 
+    def print(self):
+        def printer(started_gen):
+            e = next(started_gen)
+            print(e)
+            yield e
+        self.gen = printer(self.gen)
+
 
 if __name__ == "__main__":
 
@@ -93,7 +101,6 @@ if __name__ == "__main__":
     def count_print(x: int, n: int = 9):
         """side effect with refl()"""
         global acc
-        print(x)
         acc += 1
         # forcibly exit after n prints
         if acc > n:
@@ -104,9 +111,10 @@ if __name__ == "__main__":
     ppl.filterfalse(lambda x: x < 35 or x > 45)
     # l = [v for v in ppl.tee()]
     # print(l)
-    ppl.starmap(count_print)
+    ppl.print()  # print in pipeline
+    ppl.map(count_print)
 
-    # actually run
+    # actually run and print entire value list
     print(list(v for v in ppl))
 
 
