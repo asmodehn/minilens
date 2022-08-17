@@ -1,6 +1,7 @@
 from itertools import repeat
 from typing import Callable, Iterator, List
 
+import curses
 from ppl import Pipeline
 
 """
@@ -35,42 +36,36 @@ class CharInput(Pipeline):
         super(CharInput, self).__init__(iter_input)
 
 
+class CharArea:  # TODO  :extract a common Area concept, that works for words and lines
 
-class CharArea:
-
-    def __init__(self):
-        pass
+    def __init__(self, stdscr):
+        self.stdscr = stdscr
 
     def __enter__(self):
-        self.r, self.c = stdscr.getyx()
+        self.r, self.c = self.stdscr.getyx()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         # move to the beginning of the word
-        stdscr.move(self.r, self.c)
+        self.stdscr.move(self.r, self.c)
 
         # erase until the end of line (input limit)
-        stdscr.clrtoeol()
+        self.stdscr.clrtoeol()
 
         # screen is now clean again for further output
 
     def __call__(self, ch: int) -> int:
         """ char input behavior in the area """
-        r, c = stdscr.getyx()  # local coord for this call / this char
+        # TODO: unicode / complex char / multipress input ???
+        r, c = self.stdscr.getyx()  # local coord for this call / this char
         if ch in [ord(b"\b"), 127, curses.KEY_BACKSPACE]:  # various possible ascii codes for a delete backspace
-            stdscr.delch(r, c - 1)
+            self.stdscr.delch(r, c - 1)
         else:
-            stdscr.addch(ch)
+            self.stdscr.addch(ch)
         return ch
 
 
-
-
-
-
-
 if __name__ == "__main__":
-    import curses
 
     # computer user interface delegate to curses window
     stdscr = curses.initscr()
