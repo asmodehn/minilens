@@ -7,13 +7,23 @@ from typing import Callable, Generator, Iterator, List
 from chr import CharInput, char
 from ppl import Pipeline
 
+"""
+
+Word input as bytes iterator (possibly async ?)
+Also as a Pipeline to modify itself with operators on iterables
+
+"""
+
 
 class word:
 
-    __slots__ = ("yx", 'wd')
+    __slots__ = ("yx", "wd")
 
     @classmethod
-    def generate(cls, stdscr, chi: Iterator[char], separators: List[int]) -> Generator[word, None, None]:
+    def generate(
+        cls, stdscr, chi: Iterator[char], separators: List[int]
+    ) -> Generator[word, None, None]:
+        # we want a new pipeline, without modifying the existing char_pipeline
         for k, gc in groupby(chi, key=lambda c: c.ch in separators):
             if not k:  # if this char is not a separator
                 yield word(stdscr=stdscr, chi=gc, separators=separators)
@@ -22,7 +32,7 @@ class word:
         # initialize word on iterator to get the position of the beginning of the word
         first_char_pos = stdscr.getyx()
         # IMPORTANT: remove the size of the first character !!!
-        self.yx = first_char_pos[0], first_char_pos[1] -1
+        self.yx = first_char_pos[0], first_char_pos[1] - 1
         # accumulate chars from iterator into a word (omitting separators)
         self.wd = bytes(ch.ch for ch in chi if ch.ch not in separators)
 
@@ -31,9 +41,6 @@ class word:
 
 
 class WordInput(Pipeline):
-
-    # TODO : add methods to manipulate output on screen, usable on generator pipeline/stream
-    #        -> WordIO
 
     # Note:
     # - Char input, is a generator of (one) byte = int
@@ -49,13 +56,9 @@ class WordInput(Pipeline):
         self.until = until
         self.windex = 0
 
-        # we want a new pipeline, without modifying the existing char_pipeline
-        # word_pipeline = (list(ch) if ch not in self.until else []
-        #                  for k, ch in groupby(
-        #                     pairwise(char_pipeline),
-        #                     key=lambda pchr: self.count(*pchr)
-        #                 ))
-        word_pipeline = word.generate(stdscr=stdscr, chi=char_pipeline, separators=until)
+        word_pipeline = word.generate(
+            stdscr=stdscr, chi=char_pipeline, separators=until
+        )
         super(WordInput, self).__init__(word_pipeline)
 
     def __call__(self, fun: Callable[[word], word]):
@@ -89,7 +92,6 @@ def area(stdscr, finalize: Callable[[bytes], bytes]):
     # screen is now clean again for further output
 
 
-
 if __name__ == "__main__":
     import curses
 
@@ -102,40 +104,43 @@ if __name__ == "__main__":
     # cbreak mode to not buffer keys
     curses.cbreak()
 
-    charin = CharInput.from_callable(stdscr=stdscr,call_input=stdscr.getch, until=[
-        4,  # EOT  via Ctrl-D
-        10,  # EOL  via Enter/Return
-    ])
+    charin = CharInput.from_callable(
+        stdscr=stdscr,
+        call_input=stdscr.getch,
+        until=[
+            4,  # EOT  via Ctrl-D
+        ],
+    )
 
     @charin
     def char_process(ch: char) -> char:
         # TODO: unicode / complex char / multipress input ???
-        if ch.ch in [ord(b"\b"), 127, curses.KEY_BACKSPACE]:  # various possible ascii codes for a delete backspace
+        if ch.ch in [
+            ord(b"\b"),
+            127,
+            curses.KEY_BACKSPACE,
+        ]:  # various possible ascii codes for a delete backspace
             stdscr.delch(ch.yx[0], ch.yx[1] - 1)
         else:
             stdscr.addch(ch.ch)
         return ch
 
-
-    wordin = WordInput(char_pipeline=charin, until=[
-        32,  # EOW  via space
-        10,  # EOL  via Enter/Return
-    ])
+    wordin = WordInput(
+        char_pipeline=charin,
+        until=[
+            32,  # EOW  via space
+            10,  # EOL  via Enter/Return
+        ],
+    )
 
     @wordin
     def word_process(w: word) -> word:
         # TODO: word processing upon ending when typing separator
         # currently just displaying the length.
-        w.wd = f"{len(w.wd)} ".encode("ascii")  # reminder wd is bytes and we need to keep separator
+        w.wd = f"{len(w.wd)} ".encode(
+            "ascii"
+        )  # reminder wd is bytes and we need to keep separator
         return w
-
-    #
-    # with WordArea(stdscr) as area:
-    #     # This part seems necessary, as we want to output all chars while typing a word
-    #     with CharArea(stdscr) as char_area:
-    #         charin(char_area)
-    #
-    #     wordin(area)
 
     # to loop through the iterator until the end
     print([w for w in wordin])

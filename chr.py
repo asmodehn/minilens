@@ -15,7 +15,7 @@ Also as a Pipeline to modify itself with operators on iterables
 
 class char:
 
-    __slots__ = ('yx', 'ch')
+    __slots__ = ("yx", "ch")
 
     def __init__(self, stdscr, ch: int) -> None:
         self.yx = stdscr.getyx()
@@ -55,37 +55,6 @@ class CharInput(Pipeline):
         self.map(fun)
         # TODO : better mapper here (follow mapper in word implementation)
 
-#
-# class CharArea:  # TODO  :extract a common Area concept, that works for words and lines
-#
-#     def __init__(self, stdscr):
-#         self.stdscr = stdscr
-#
-#     def __enter__(self):
-#         self.r, self.c = self.stdscr.getyx()
-#         return self
-#
-#     def __exit__(self, exc_type, exc_val, exc_tb):
-#         # move to the beginning of the word
-#         self.stdscr.move(self.r, self.c)
-#
-#         # erase until the end of line (input limit)
-#         self.stdscr.clrtoeol()
-#
-#         # screen is now clean again for further output
-#
-#     def __call__(self, ch: int) -> int:
-#         """ char input behavior in the area """
-#         # TODO: unicode / complex char / multipress input ???
-#         r, c = self.stdscr.getyx()  # local coord for this call / this char
-#         if ch in [ord(b"\b"), 127, curses.KEY_BACKSPACE]:  # various possible ascii codes for a delete backspace
-#             self.stdscr.delch(r, c - 1)
-#         else:
-#             self.stdscr.addch(ch)
-#         return ch
-
-
-
 
 if __name__ == "__main__":
 
@@ -98,15 +67,23 @@ if __name__ == "__main__":
     # cbreak mode to not buffer keys
     curses.cbreak()
 
-    charin = CharInput.from_callable(stdscr=stdscr, call_input=stdscr.getch, until=[
-        4,  # EOT  via Ctrl-D
-        10,  # EOL  via Enter/Return
-    ])
+    charin = CharInput.from_callable(
+        stdscr=stdscr,
+        call_input=stdscr.getch,
+        until=[
+            4,  # EOT  via Ctrl-D
+            10,  # EOL  via Enter/Return
+        ],
+    )
 
     @charin
     def char_process(ch: char) -> char:
         # TODO: unicode / complex char / multipress input ???
-        if ch in [ord(b"\b"), 127, curses.KEY_BACKSPACE]:  # various possible ascii codes for a delete backspace
+        if ch in [
+            ord(b"\b"),
+            127,
+            curses.KEY_BACKSPACE,
+        ]:  # various possible ascii codes for a delete backspace
             stdscr.delch(ch.yx[0], ch.yx[1] - 1)
         else:
             stdscr.addch(ch.ch)
@@ -114,6 +91,7 @@ if __name__ == "__main__":
 
     # to loop through the iterator until the end
     print([c for c in charin])
+    # Note : no time to see the print in output since curses erases the screen on exit
 
     # curses cleanup
     curses.nocbreak()
