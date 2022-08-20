@@ -1,6 +1,7 @@
+from __future__ import annotations
 import contextlib
 from itertools import repeat
-from typing import Callable, Iterator, List
+from typing import Callable, Generator, Iterator, List, Tuple
 
 import curses
 from ppl import Pipeline
@@ -17,12 +18,32 @@ class char:
 
     __slots__ = ("yx", "ch")
 
-    def __init__(self, stdscr, ch: int) -> None:
-        self.yx = stdscr.getyx()
+    @classmethod
+    def generate(
+        cls,
+        call_position: Callable[[], Tuple[int, int]],
+        call_input: Callable[[], int],
+        until: List[int]
+    ) -> Generator[char, None, None]:
+        # TODO: skip initial separators -> HOW ??
+        while (ch := call_input()) not in until:
+            yield char(ch, call_position())
+
+    def __init__(self, ch: int, yx: Tuple[int, int]) -> None:
+        self.yx = yx
         self.ch = ch
 
     def __repr__(self) -> str:
-        return bytes([self.ch]).decode("ascii")
+        return f'{self} @ {self.yx}'
+
+    def __str__(self) -> str:
+        return bytes([self.ch]).decode('ascii')
+
+
+# Note:
+# - Char input, is a generator of (one) byte = int
+# - Word input is a generator of bytes
+# - line input is a generator of bytes (as lines), and is also a stream (following stream protocol).
 
 
 class CharInput(Pipeline):
@@ -30,23 +51,8 @@ class CharInput(Pipeline):
     # TODO : add methods to manipulate output on screen, usable on generator pipeline/stream
     #        -> CharIO
 
-    # Note:
-    # - Char input, is a generator of (one) byte = int
-    # - Word input is a generator of bytes
-    # - line input is a generator of bytes (as lines), and is also a stream (following stream protocol).
-
-    @classmethod
-    def from_callable(cls, stdscr, call_input: Callable[[], int], until: List[int]):
-        def gen():
-            # TODO: skip initial separators -> HOW ??
-            while (ch := call_input()) not in until:
-                yield char(stdscr, ch)
-
-        # starting generator immediately (consumption is blocking)
-        # TODO : maybe delay based on CharArea available and initialized ??
-        return CharInput(gen())
-
-    def __init__(self, iter_input: Iterator[char]):
+    def __init__(self, call_position:  Callable[[], Tuple[int, int]], call_input: Callable[[], int], until: List[int]):
+        iter_input = char.generate(call_position, call_input, until)
         super(CharInput, self).__init__(iter_input)
 
     def __call__(self, fun: Callable[[char], char]):
@@ -67,8 +73,8 @@ if __name__ == "__main__":
     # cbreak mode to not buffer keys
     curses.cbreak()
 
-    charin = CharInput.from_callable(
-        stdscr=stdscr,
+    charin = CharInput(
+        call_position=stdscr.getyx,
         call_input=stdscr.getch,
         until=[
             4,  # EOT  via Ctrl-D
@@ -79,7 +85,7 @@ if __name__ == "__main__":
     @charin
     def char_process(ch: char) -> char:
         # TODO: unicode / complex char / multipress input ???
-        if ch in [
+        if ch.ch in [
             ord(b"\b"),
             127,
             curses.KEY_BACKSPACE,

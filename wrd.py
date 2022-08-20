@@ -39,6 +39,16 @@ class word:
     def __repr__(self) -> str:
         return self.wd.decode("ascii")
 
+    @property
+    def chars(self) -> Generator[char]:
+        # building generators from existing data
+        char_gen = iter(self.wd)
+        # here we expect char to be only one cell to compute position... (as per definition ?)
+        pos_gen = ((self.yx[0], self.yx[1] + i) for i, c in enumerate(self.wd))
+
+        # passing next in generator as callable to get the next element
+        return char.generate(pos_gen.__next__, char_gen.__next__, until=[])
+
 
 class WordInput(Pipeline):
 
@@ -47,14 +57,10 @@ class WordInput(Pipeline):
     # - Word input is a generator of bytes
     # - line input is a generator of bytes (as lines), and is also a stream (following stream protocol).
 
-    def count(self, last, current):
-        if current in self.until and last != current:
-            self.windex = self.windex + 1
-        return self.windex
-
-    def __init__(self, char_pipeline: Pipeline[char], until: List[int]):
+    def __init__(self, stdscr, char_pipeline: Pipeline[char], until: List[int]):
         self.until = until
         self.windex = 0
+        self.stdscr = stdscr
 
         word_pipeline = word.generate(
             stdscr=stdscr, chi=char_pipeline, separators=until
@@ -68,13 +74,13 @@ class WordInput(Pipeline):
         def fun_wrapper(w: word) -> word:
 
             # move cursor to beginning of word and clean
-            stdscr.move(*w.yx)
-            stdscr.clrtoeol()
+            self.stdscr.move(*w.yx)
+            self.stdscr.clrtoeol()
 
             processed = fun(w)
 
             # replace with processed
-            stdscr.addstr(processed.wd.decode("ascii"))
+            self.stdscr.addstr(processed.wd.decode("ascii"))
 
             return processed
 
@@ -126,6 +132,7 @@ if __name__ == "__main__":
         return ch
 
     wordin = WordInput(
+        stdscr=stdscr,
         char_pipeline=charin,
         until=[
             32,  # EOW  via space
