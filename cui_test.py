@@ -19,6 +19,8 @@ def callable_from_bytes(input: bytes) -> Callable[[], int]:
 
     return it
 
+# TODO : automatically test curses with interactive input
+
 
 def test_chars_gen_initial():
     # no char usecase
@@ -152,6 +154,23 @@ class WordTest(unittest.TestCase):
         # Note: other delimiter in word buffer for possible input for external process
         assert str(w2) == "output\n"
 
+    def test_08_len(self):
+        w = Word(limiters=[ord(b"\n")])
+
+        test_value = b"testing output\n"
+        it = callable_from_bytes(test_value)
+
+        w(input=it)
+
+        # Note: no word delimiter in output
+        assert str(w) == "testing"
+
+        w2 = Word(limiters=[ord(b"\n")])
+        # next word from same generator
+        w2(input=it)
+
+        # Note: other delimiter in word buffer for possible input for external process
+        assert str(w2) == "output\n"
 
 # class LineTest(unittest.TestCase):
 #     # TODO

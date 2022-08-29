@@ -4,7 +4,7 @@ from itertools import repeat
 from typing import Callable, Generator, Iterator, List, Tuple
 
 import curses
-from ppl import Pipeline
+from pipeline import Pipeline
 
 """
 
@@ -25,7 +25,6 @@ class char:
         call_input: Callable[[], int],
         until: List[int]
     ) -> Generator[char, None, None]:
-        # TODO: skip initial separators -> HOW ??
         while (ch := call_input()) not in until:
             yield char(ch, call_position())
 

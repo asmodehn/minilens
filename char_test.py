@@ -2,7 +2,7 @@ import unittest
 from itertools import tee
 from unittest import TestCase
 
-from chr import char
+from char import char
 
 
 class CharTest(TestCase):

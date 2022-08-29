@@ -1,6 +1,6 @@
 import unittest
 
-from ppl import Pipeline
+from pipeline import Pipeline
 
 
 class TestPPL(unittest.TestCase):
@@ -39,7 +39,7 @@ class TestPPL(unittest.TestCase):
             # check for equality one to one
             ppl_ctx.starmap(lambda a, b: a == b)
 
-        # for all elements
+        # assert all elements true
         assert all(ppl_ctx)
 
 

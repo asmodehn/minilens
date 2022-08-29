@@ -1,72 +1,56 @@
 from __future__ import annotations
-
-from chr import CharInput, char
-from ppl import Pipeline
-
-"""
-
-Sentences input as list of bytes iterator (possibly async ?)
-# TODO : stream protocol(like reading file, line by line)
-Also as a Pipeline to modify itself with operators on iterables
-
- TODO : difference between sentence and line ?? 
-       - what about wordwrap ?? 
-       - period to end commands (cf. Joy) ??
-       - Maybe two different iterators on top of word iterator ?
-
-"""
-from itertools import groupby
+import contextlib
+import operator
+from itertools import cycle, groupby, pairwise
 from typing import Callable, Generator, Iterator, List
 
-from wrd import WordInput, word
+from char import CharInput, char
+from pipeline import Pipeline
+
+"""
+
+Word input as bytes iterator (possibly async ?)
+Also as a Pipeline to modify itself with operators on iterables
+
+"""
 
 
-class line:
+class word:
 
-    __slots__ = ("stdscr", "yx", "ln")
+    __slots__ = ("yx", "wd")
 
     @classmethod
     def generate(
-        cls, stdscr, wdi: Iterator[char], separators: List[int]
-    ) -> Generator[line, None, None]:
+        cls, stdscr, chi: Iterator[char], separators: List[int]
+    ) -> Generator[word, None, None]:
         # we want a new pipeline, without modifying the existing char_pipeline
-        for k, gc in groupby(wdi, key=lambda c: c.ch in separators):
-            if not k:  # if this word is not a separator
-                yield line(stdscr=stdscr, chi=gc, separators=separators)
+        for k, gc in groupby(chi, key=lambda c: c.ch in separators):
+            if not k:  # if this char is not a separator
+                yield word(stdscr=stdscr, chi=gc, separators=separators)
 
     def __init__(self, stdscr, chi: Iterator[char], separators: List[int]) -> None:
-        self.stdscr = stdscr
         # initialize word on iterator to get the position of the beginning of the word
-        first_char_pos = self.stdscr.getyx()
-        # IMPORTANT: remove the size of the first char !!!
+        first_char_pos = stdscr.getyx()
+        # IMPORTANT: remove the size of the first character !!!
         self.yx = first_char_pos[0], first_char_pos[1] - 1
         # accumulate chars from iterator into a word (omitting separators)
-        self.ln = bytes(ch.ch for ch in chi if ch.ch not in separators)
+        self.wd = bytes(ch.ch for ch in chi if ch.ch not in separators)
 
     def __repr__(self) -> str:
-        return f"{self.ln.decode('ascii')} @ {self.yx}"
-
-    def __str__(self) -> str:
-        return self.ln.decode("ascii")
+        return self.wd.decode("ascii")
 
     @property
     def chars(self) -> Generator[char]:
         # building generators from existing data
-        char_gen = iter(self.ln)
+        char_gen = iter(self.wd)
         # here we expect char to be only one cell to compute position... (as per definition ?)
-        pos_gen = ((self.yx[0], self.yx[1] + i) for i, c in enumerate(self.ln))
+        pos_gen = ((self.yx[0], self.yx[1] + i) for i, c in enumerate(self.wd))
 
         # passing next in generator as callable to get the next element
         return char.generate(pos_gen.__next__, char_gen.__next__, until=[])
 
-    @property
-    def words(self) -> Generator[word]:
-        return word.generate(stdscr=self.stdscr,
-                             chi=self.chars,
-                             separators=[32])
 
-
-class LineInput(Pipeline):
+class WordInput(Pipeline):
 
     # Note:
     # - Char input, is a generator of (one) byte = int
@@ -78,29 +62,40 @@ class LineInput(Pipeline):
         self.windex = 0
         self.stdscr = stdscr
 
-        line_pipeline = line.generate(
-            stdscr=stdscr, wdi=char_pipeline, separators=until
+        word_pipeline = word.generate(
+            stdscr=stdscr, chi=char_pipeline, separators=until
         )
-        super(LineInput, self).__init__(line_pipeline)
+        super(WordInput, self).__init__(word_pipeline)
 
-    def __call__(self, fun: Callable[[line], line]):
+    def __call__(self, fun: Callable[[word], word]):
         # applying the function to this iterator
         # effectively making this a decorator (?)
 
-        def fun_wrapper(l: line) -> line:
+        def fun_wrapper(w: word) -> word:
 
             # move cursor to beginning of word and clean
-            self.stdscr.move(*l.yx)
+            self.stdscr.move(*w.yx)
             self.stdscr.clrtoeol()
 
-            processed = fun(l)
+            processed = fun(w)
 
             # replace with processed
-            self.stdscr.addstr(str(processed))
+            self.stdscr.addstr(processed.wd.decode("ascii"))
 
             return processed
 
         self.map(fun_wrapper)
+
+
+@contextlib.contextmanager
+def area(stdscr, finalize: Callable[[bytes], bytes]):
+    y, x = stdscr.getyx()
+    yield y, x
+    # move to the beginning of the word
+    stdscr.move(y, x)
+    # erase until the end of line (input limit)
+    stdscr.clrtoeol()
+    # screen is now clean again for further output
 
 
 if __name__ == "__main__":
@@ -115,8 +110,8 @@ if __name__ == "__main__":
     # cbreak mode to not buffer keys
     curses.cbreak()
 
-    charin = CharInput.from_callable(
-        stdscr=stdscr,
+    charin = CharInput(
+        call_position=stdscr.getyx,
         call_input=stdscr.getch,
         until=[
             4,  # EOT  via Ctrl-D
@@ -141,7 +136,7 @@ if __name__ == "__main__":
         char_pipeline=charin,
         until=[
             32,  # EOW  via space
-            # 10,  # EOL  via Enter/Return ???
+            10,  # EOL  via Enter/Return
         ],
     )
 
@@ -154,28 +149,8 @@ if __name__ == "__main__":
         )  # reminder wd is bytes and we need to keep separator
         return w
 
-
-    linein = LineInput(
-        stdscr=stdscr,
-        char_pipeline=charin,
-        until=[
-            10,  # EOL  via Enter/Return ???
-        ]
-    )
-
-
-    @linein
-    def line_process(l: line) -> line:
-        # TODO: word processing upon ending when typing separator
-        # currently just displaying the length.
-        l.ln = f"{len(list(l.words))} words".encode(
-            "ascii"
-        )  # reminder wd is bytes and we need to keep separator
-        return l
-
-
     # to loop through the iterator until the end
-    print([l for l in linein])
+    print([w for w in wordin])
 
     # curses cleanup
     curses.nocbreak()

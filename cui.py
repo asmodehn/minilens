@@ -1,7 +1,8 @@
 from __future__ import annotations
 import contextlib
 import curses
-from typing import Any, Callable, ClassVar, Generator, List, MutableSequence, Optional
+from itertools import count, cycle, repeat, starmap, takewhile
+from typing import Any, Callable, ClassVar, Generator, Iterable, Iterator, List, MutableSequence, Optional
 
 """
 Structuring screen as an interface for simpler manipulation from code
@@ -9,13 +10,47 @@ Here we attempt to follow the structure of human produced texts where suitable a
 """
 
 
-def chars(input: Callable[[], int], until: List[int]):
+def interactive_input(stdscr, ignore_logic: Callable[[int], int | None]):
+    """
+    immediately output inputted char
+    and add other key navigation logic
+    """
+    def iinput():
+        ch = stdscr.getch()
+        y, x = stdscr.getyx()
+        if ch in [ord(b"\b"), 127, curses.KEY_BACKSPACE]:  # various possible ascii codes for a delete backspace
+            stdscr.delch(y, x - 1)
+        else:
+            stdscr.addch(ch)
+        # TODO : logic in word should impact things here maybe ?? TODO...
+        return ch
+
+    return iinput
+
+
+def char_loop(input: Callable[[], int], until: List[int]) -> Generator[int, None, None]:
     try:
         while (ch := input()) not in until:
             yield ch
         yield ch  # last yield to return limiter and terminate generator
     except StopIteration as si:
         return  # return if (potentially) underlying generator terminates
+
+
+def char_filter(chars: Generator[int, None, None], ignore_if: Callable[[int], True | False])\
+        -> Generator[int, None, None]:
+    for c in chars:
+        if not ignore_if(c):
+            yield c
+
+
+def char_output(chars: Generator[int, None, None], output: Callable[[int], None])\
+        -> Generator[int, None, None]:
+    for c in chars:
+        output(c)
+        yield
+
+
 
 
 # TODO : same but lazy ? iterator ?
@@ -47,7 +82,7 @@ class Word:
         # Note: a higher level limiter implies this limiter
         self.limiters = limiters + [self.EOW]
 
-    def __eq__(self, other: Word | str | bytes):
+    def __eq__(self, other: object):
         if isinstance(other, Word):
             return self.buffer == other.buffer
         # otherwise, we use self conversions to check for equality in other's type
@@ -65,22 +100,67 @@ class Word:
 
         yield from self.buffer
 
+    def __len__(self):
+        return len(self.buffer)
+
     # TODO : async
     def __call__(self, input: Callable[[], int]) -> Word:
         """ async generator for input : one char at a time, asynchronously."""
 
         while len(self.buffer) == 0:  # preventing empty (meaningless) word
-            for ch in chars(input, until=self.limiters):
-                if ch == self.EOW:
-                    break  # end of word input
-                # last char is not appended to buffer
-                # unless it is not Word limiter
-                self.buffer.append(ch)
+            chario = CharInput(starmap(self.input, repeat(tuple())), until=self.limiters)
+            # remove end of word limiter
+            chario.filterfalse(lambda c: c == self.EOW)
+            # echo to screen
+            chario.starmap(lambda c: chario.addch(c))
+            # append to buffer
+            chario.starmap(lambda c: self.buffer.append(c))
+
+                # WIP : replacing this with generator / streams for lazy compute
+                # if ch == self.EOW:
+                #     break  # end of word input
+                # # last char is not appended to buffer
+                # # unless it is not Word limiter
+                # self.buffer.append(ch)
+
+                # reverse way !
+                # passing function down to char input
+                cgen(lambda x: )
 
         return self
 
     def __str__(self) -> str:
         return self.buffer.decode("ascii")
+
+
+class InputArea:
+    def __init__(self, stdscr):  # TODO : more possible content types
+        self.stdscr = stdscr
+        self.iinput = interactive_input(stdscr=stdscr)
+
+    def __enter__(self) -> InputArea:
+        self.top_left = self.stdscr.getyx()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+
+        # move to the beginning of the word
+        self.stdscr.move(*self.top_left)
+
+        # erase until the end of line (input limit)
+        self.stdscr.clrtoeol()
+
+        # screen is now clean for any process with the buffer content.
+
+    def __call__(self) -> int:
+        ch = self.stdscr.getch()
+        y, x = self.stdscr.getyx()
+        if ch in [ord(b"\b"), 127, curses.KEY_BACKSPACE]:  # various possible ascii codes for a delete backspace
+            self.stdscr.delch(y, x - 1)
+        else:
+            self.stdscr.addch(ch)
+        # TODO : logic in word should impact things here maybe ?? TODO...
+        return ch
 
 #
 # @contextlib.contextmanager
@@ -225,9 +305,6 @@ class CursesUI:
     # def lines(self):
     #     return Lines(stdscr=self.stdscr, limiters=self.limiters)
 
-    @property
-    def word(self):
-        return Word(limiters=self.limiters)
 
 
 
@@ -289,17 +366,20 @@ if __name__ == "__main__":
 
     wcount = 0
 
-
-
     with CursesUI() as cui:
 
-        def input_refl():  # immediately output inputted char
-            ch = cui.stdscr.getch()
-            cui.stdscr.addch(ch)
-            return ch
-
         while True:
-            w = cui.word(input_refl)
-            # print("\n" + str(w))
+            with InputArea(cui.stdscr) as area:
+                w = Word(limiters=[])  # create word input buffer
+
+                # Note: We could run code *during* input with an async iterator (TODO)
+
+                w(input=area)  # interactive input in the area
+
+                # Note: we can run code after word input via iterator
+
+            # process the word after exiting area (cursor back into original position)
+            cui.stdscr.addstr(str(len(w)) + " ")
+
         # do global stuff
 
