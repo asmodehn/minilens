@@ -72,12 +72,16 @@ if __name__ == "__main__":
     # cbreak mode to not buffer keys
     curses.cbreak()
 
+    # to allow scrolling on new line at end of main window
+    stdscr.idlok(True)
+    stdscr.scrollok(True)
+
     charin = CharInput(
         call_position=stdscr.getyx,
         call_input=stdscr.getch,
         until=[
             4,  # EOT  via Ctrl-D
-            10,  # EOL  via Enter/Return
+            # 10,  # EOL  via Enter/Return
         ],
     )
 

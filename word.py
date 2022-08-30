@@ -1,5 +1,6 @@
 from __future__ import annotations
 import contextlib
+import itertools
 import operator
 from itertools import cycle, groupby, pairwise
 from typing import Callable, Generator, Iterator, List
@@ -29,12 +30,11 @@ class word:
                 yield word(stdscr=stdscr, chi=gc, separators=separators)
 
     def __init__(self, stdscr, chi: Iterator[char], separators: List[int]) -> None:
-        # initialize word on iterator to get the position of the beginning of the word
-        first_char_pos = stdscr.getyx()
-        # IMPORTANT: remove the size of the first character !!!
-        self.yx = first_char_pos[0], first_char_pos[1] - 1
-        # accumulate chars from iterator into a word (omitting separators)
-        self.wd = bytes(ch.ch for ch in chi if ch.ch not in separators)
+        # get the position of the beginning of the word
+        first_char = next(chi)
+        self.yx = first_char.yx
+        # accumulate chars from iterator into a word (until a separator is encountered)
+        self.wd = bytes([first_char.ch] + [ch.ch for ch in chi if ch.ch not in separators])
 
     def __repr__(self) -> str:
         return self.wd.decode("ascii")
@@ -72,10 +72,15 @@ class WordInput(Pipeline):
         # effectively making this a decorator (?)
 
         def fun_wrapper(w: word) -> word:
+            # find beginning of word (may have moved if scrolled)
+            # if w.wd[-1] == ord(b"\n"):  # TODO : this should be managed in line / window instead
+            #     w.yx = w.yx[0] - 1, w.yx[1]  # remove one line
+            # TODO : manage scroll area in window...
 
             # move cursor to beginning of word and clean
             self.stdscr.move(*w.yx)
-            self.stdscr.clrtoeol()
+            self.stdscr.clrtobot()  # to also clear when input is multiline
+            # Note: another option is to confine input to one line only, with filter()...
 
             processed = fun(w)
 
@@ -85,17 +90,6 @@ class WordInput(Pipeline):
             return processed
 
         self.map(fun_wrapper)
-
-
-@contextlib.contextmanager
-def area(stdscr, finalize: Callable[[bytes], bytes]):
-    y, x = stdscr.getyx()
-    yield y, x
-    # move to the beginning of the word
-    stdscr.move(y, x)
-    # erase until the end of line (input limit)
-    stdscr.clrtoeol()
-    # screen is now clean again for further output
 
 
 if __name__ == "__main__":
@@ -109,6 +103,12 @@ if __name__ == "__main__":
     curses.noecho()
     # cbreak mode to not buffer keys
     curses.cbreak()
+
+    # to allow scrolling on new line at end of main window
+    stdscr.idlok(True)
+    stdscr.scrollok(True)
+    # TODO : this somehow breaks word replacing logic with position...
+    #   but only when scrolling... TOFIX !
 
     charin = CharInput(
         call_position=stdscr.getyx,
