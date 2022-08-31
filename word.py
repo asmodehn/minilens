@@ -22,14 +22,15 @@ class word:
 
     @classmethod
     def generate(
-        cls, stdscr, chi: Iterator[char], separators: List[int]
+        cls, chi: Pipeline[char], separators: List[int]
     ) -> Generator[word, None, None]:
         # we want a new pipeline, without modifying the existing char_pipeline
+        # Note : we want to tee the char pipeline to allow others (line pipeline f.i.) to consume it (?????)
         for k, gc in groupby(chi, key=lambda c: c.ch in separators):
             if not k:  # if this char is not a separator
-                yield word(stdscr=stdscr, chi=gc, separators=separators)
+                yield word(chi=gc, separators=separators)
 
-    def __init__(self, stdscr, chi: Iterator[char], separators: List[int]) -> None:
+    def __init__(self, chi: Iterator[char], separators: List[int]) -> None:
         # get the position of the beginning of the word
         first_char = next(chi)
         self.yx = first_char.yx
@@ -37,17 +38,20 @@ class word:
         self.wd = bytes([first_char.ch] + [ch.ch for ch in chi if ch.ch not in separators])
 
     def __repr__(self) -> str:
+        return f"{self.wd.decode('ascii')} @ {self.yx}"
+
+    def __str__(self) -> str:
         return self.wd.decode("ascii")
 
     @property
-    def chars(self) -> Generator[char]:
+    def chars(self) -> Pipeline[char]:
         # building generators from existing data
         char_gen = iter(self.wd)
         # here we expect char to be only one cell to compute position... (as per definition ?)
         pos_gen = ((self.yx[0], self.yx[1] + i) for i, c in enumerate(self.wd))
 
         # passing next in generator as callable to get the next element
-        return char.generate(pos_gen.__next__, char_gen.__next__, until=[])
+        return Pipeline(char.generate(pos_gen.__next__, char_gen.__next__, until=[]))
 
 
 class WordInput(Pipeline):
@@ -63,7 +67,7 @@ class WordInput(Pipeline):
         self.stdscr = stdscr
 
         word_pipeline = word.generate(
-            stdscr=stdscr, chi=char_pipeline, separators=until
+            chi=char_pipeline, separators=until
         )
         super(WordInput, self).__init__(word_pipeline)
 

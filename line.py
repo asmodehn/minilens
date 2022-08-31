@@ -27,21 +27,19 @@ class line:
 
     @classmethod
     def generate(
-        cls, stdscr, wdi: Iterator[char], separators: List[int]
+        cls, chi: Pipeline[char], separators: List[int]
     ) -> Generator[line, None, None]:
         # we want a new pipeline, without modifying the existing char_pipeline
-        for k, gc in groupby(wdi, key=lambda c: c.ch in separators):
+        for k, gc in groupby(chi, key=lambda c: c.ch in separators):
             if not k:  # if this word is not a separator
-                yield line(stdscr=stdscr, chi=gc, separators=separators)
+                yield line(chi=gc, separators=separators)
 
-    def __init__(self, stdscr, chi: Iterator[char], separators: List[int]) -> None:
-        self.stdscr = stdscr
-        # initialize word on iterator to get the position of the beginning of the word
-        first_char_pos = self.stdscr.getyx()
-        # IMPORTANT: remove the size of the first char !!!
-        self.yx = first_char_pos[0], first_char_pos[1] - 1
-        # accumulate chars from iterator into a word (omitting separators)
-        self.ln = bytes(ch.ch for ch in chi if ch.ch not in separators)
+    def __init__(self, chi: Iterator[char], separators: List[int]) -> None:
+        # get the position of the beginning of the line
+        first_char = next(chi)
+        self.yx = first_char.yx
+        # accumulate chars from iterator into a line (until a separator is encountered)
+        self.ln = bytes([first_char.ch] + [ch.ch for ch in chi if ch.ch not in separators])
 
     def __repr__(self) -> str:
         return f"{self.ln.decode('ascii')} @ {self.yx}"
@@ -50,20 +48,18 @@ class line:
         return self.ln.decode("ascii")
 
     @property
-    def chars(self) -> Generator[char]:
+    def chars(self) -> Pipeline[char]:
         # building generators from existing data
         char_gen = iter(self.ln)
         # here we expect char to be only one cell to compute position... (as per definition ?)
         pos_gen = ((self.yx[0], self.yx[1] + i) for i, c in enumerate(self.ln))
 
         # passing next in generator as callable to get the next element
-        return char.generate(pos_gen.__next__, char_gen.__next__, until=[])
+        return Pipeline(char.generate(pos_gen.__next__, char_gen.__next__, until=[]))
 
     @property
-    def words(self) -> Generator[word]:
-        return word.generate(stdscr=self.stdscr,
-                             chi=self.chars,
-                             separators=[32])
+    def words(self) -> Pipeline[word]:
+        return Pipeline(word.generate(chi=self.chars, separators=[32]))
 
 
 class LineInput(Pipeline):
@@ -79,7 +75,7 @@ class LineInput(Pipeline):
         self.stdscr = stdscr
 
         line_pipeline = line.generate(
-            stdscr=stdscr, wdi=char_pipeline, separators=until
+            chi=char_pipeline, separators=until
         )
         super(LineInput, self).__init__(line_pipeline)
 
@@ -91,7 +87,7 @@ class LineInput(Pipeline):
 
             # move cursor to beginning of word and clean
             self.stdscr.move(*l.yx)
-            self.stdscr.clrtoeol()
+            self.stdscr.clrtobot()
 
             processed = fun(l)
 
@@ -168,7 +164,7 @@ if __name__ == "__main__":
     def line_process(l: line) -> line:
         # TODO: word processing upon ending when typing separator
         # currently just displaying the length.
-        l.ln = f"{len(list(l.words))} words".encode(
+        l.ln = f"{len(l.ln)} chars\n".encode(  # TODO : words for testing
             "ascii"
         )  # reminder wd is bytes and we need to keep separator
         return l
