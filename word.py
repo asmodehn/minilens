@@ -142,11 +142,10 @@ if __name__ == "__main__":
 
     @wordin
     def word_process(w: word) -> word:
-        # TODO: word processing upon ending when typing separator
         # currently just displaying the length.
         w.wd = f"{len(w.wd)} ".encode(
             "ascii"
-        )  # reminder wd is bytes and we need to keep separator
+        )  # reminder wd is bytes and we need to keep (or create!) separator
         return w
 
     # to loop through the iterator until the end

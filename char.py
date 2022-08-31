@@ -58,7 +58,7 @@ class CharInput(Pipeline):
         # applying the function to this iterator
         # effectively making this a decorator (?)
         self.map(fun)
-        # TODO : better mapper here (follow mapper in word implementation)
+        # TODO : better mapper here (follow mapper in word implementation maybe ?)
 
 
 if __name__ == "__main__":
