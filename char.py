@@ -18,6 +18,11 @@ class char:
 
     __slots__ = ("yx", "ch")
 
+    # Note:
+    # - Char input, is a generator of (one) byte = int
+    # - Word input is a generator of bytes
+    # - line input is a generator of bytes (as lines), and is also a stream (following stream protocol).
+
     @classmethod
     def generate(
         cls,
@@ -37,28 +42,6 @@ class char:
 
     def __str__(self) -> str:
         return bytes([self.ch]).decode('ascii')
-
-
-# Note:
-# - Char input, is a generator of (one) byte = int
-# - Word input is a generator of bytes
-# - line input is a generator of bytes (as lines), and is also a stream (following stream protocol).
-
-
-class CharInput(Pipeline):
-
-    # TODO : add methods to manipulate output on screen, usable on generator pipeline/stream
-    #        -> CharIO
-
-    def __init__(self, call_position:  Callable[[], Tuple[int, int]], call_input: Callable[[], int], until: List[int]):
-        iter_input = char.generate(call_position, call_input, until)
-        super(CharInput, self).__init__(iter_input)
-
-    def __call__(self, fun: Callable[[char], char]):
-        # applying the function to this iterator
-        # effectively making this a decorator (?)
-        self.map(fun)
-        # TODO : better mapper here (follow mapper in word implementation maybe ?)
 
 
 if __name__ == "__main__":

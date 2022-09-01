@@ -5,7 +5,7 @@ import operator
 from itertools import cycle, groupby, pairwise
 from typing import Callable, Generator, Iterator, List
 
-from char import CharInput, char
+from char import char
 from pipeline import Pipeline
 
 """
@@ -19,6 +19,11 @@ Also as a Pipeline to modify itself with operators on iterables
 class word:
 
     __slots__ = ("yx", "wd")
+
+    # Note:
+    # - Char input, is a generator of (one) byte = int
+    # - Word input is a generator of bytes
+    # - line input is a generator of bytes (as lines), and is also a stream (following stream protocol).
 
     @classmethod
     def generate(
@@ -54,29 +59,6 @@ class word:
         return Pipeline(char.generate(pos_gen.__next__, char_gen.__next__, until=[]))
 
 
-class WordInput(Pipeline):
-
-    # Note:
-    # - Char input, is a generator of (one) byte = int
-    # - Word input is a generator of bytes
-    # - line input is a generator of bytes (as lines), and is also a stream (following stream protocol).
-
-    def __init__(self, stdscr, char_pipeline: Pipeline[char], until: List[int]):
-        self.until = until
-        self.windex = 0
-        self.stdscr = stdscr
-
-        word_pipeline = word.generate(
-            chi=char_pipeline, separators=until
-        )
-        super(WordInput, self).__init__(word_pipeline)
-
-    def __call__(self, fun: Callable[[word], word]):
-        # applying the function to this iterator
-        # effectively making this a decorator
-        self.map(fun)
-
-
 if __name__ == "__main__":
     import curses
 
@@ -95,13 +77,13 @@ if __name__ == "__main__":
     # TODO : this somehow breaks word replacing logic with position...
     #   but only when scrolling... TOFIX !
 
-    charin = CharInput(
+    charin = Pipeline(char.generate(
         call_position=stdscr.getyx,
         call_input=stdscr.getch,
         until=[
             4,  # EOT  via Ctrl-D
         ],
-    )
+    ))
 
     @charin
     def char_process(ch: char) -> char:
@@ -116,14 +98,13 @@ if __name__ == "__main__":
             stdscr.addch(ch.ch)
         return ch
 
-    wordin = WordInput(
-        stdscr=stdscr,
-        char_pipeline=charin,
-        until=[
+    wordin = Pipeline(word.generate(
+        chi=charin,
+        separators=[
             32,  # EOW  via space
             10,  # EOL  via Enter/Return
         ],
-    )
+    ))
 
     @wordin
     def word_process(w: word) -> word:

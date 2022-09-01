@@ -1,8 +1,11 @@
 import contextlib
 import curses
 import functools
-from word import WordInput, word
-from char import CharInput, char
+
+from line import line
+from pipeline import Pipeline
+from word import word
+from char import char
 
 EOT: int = 4  # ASCII: EOT
 
@@ -37,8 +40,13 @@ class Window:
         # closing screen
         curses.endwin()
 
-    def __call__(self, output: int | str | char | word, clrtobot=True):
-        if isinstance(output, word):
+    def __call__(self, output: char | word | line, clrtobot=True):
+        if isinstance(output, line):
+            self.stdscr.move(*output.yx)
+            if clrtobot:
+                self.stdscr.clrtobot()
+            self.stdscr.addstr(output.ln)
+        elif isinstance(output, word):
             self.stdscr.move(*output.yx)
             if clrtobot:
                 self.stdscr.clrtobot()
@@ -48,11 +56,6 @@ class Window:
             if clrtobot:
                 self.stdscr.clrtobot()
             self.stdscr.addch(output.ch)
-        # these seem to break semantics, as they depend on external state (cursor position)
-        # elif isinstance(output, str):
-        #     self.stdscr.addstr(output)
-        # elif isinstance(output, int):
-        #     self.stdscr.addch(output)
         else:
             raise NotImplementedError
 
@@ -61,25 +64,36 @@ class Window:
     # Also linking the lifetime of the input stream to the window seems sensible...
     @property
     @functools.lru_cache
-    def chario(self) -> CharInput:
-        return CharInput(self.stdscr.getyx, self.stdscr.getch, until=[EOT])
+    def chario(self) -> Pipeline[char]:
+        return Pipeline(char.generate(
+            call_position=self.stdscr.getyx,
+            call_input=self.stdscr.getch,
+            until=[EOT]
+        ))
 
     @property
     @functools.lru_cache
-    def wordio(self) -> WordInput:
-        return WordInput(
-            stdscr=self.stdscr,
-            char_pipeline=self.chario,
-            until=[
+    def wordio(self) -> Pipeline[word]:
+        return Pipeline(word.generate(
+            chi=self.chario,
+            separators=[
                 32,  # EOW  via space
-                10,  # EOL  via Enter/Return
             ],
-        )
+        ))
+
+    # TODO : line as set of char ? or sentence as a set of words ??
+    @property
+    @functools.lru_cache
+    def lineio(self) -> Pipeline[line]:
+        return Pipeline(line.generate(
+            chi=self.chario,
+            separators=[
+                10,  # EOL  via Enter/Return
+            ]
+        ))
 
     # TODO : only one "input" function as decorator, inspecting argument type hint
     #  to determine which iterator element to pass in the function
-
-    # TODO : line ? sentence as a set of words ??
 
 
 if __name__ == "__main__":
@@ -102,28 +116,41 @@ if __name__ == "__main__":
     #  -> only one of both example can work as a time.
     #   => FIX IT
 
-    with Window() as wordwin:
+    with Window() as win:
 
         # COMMENT this to prevent char output while typing...
-        @wordwin.chario
+        @win.chario
         def char_process(c: char) -> char:
             # output as implicit #TODO : refine these...
-            wordwin(c)
+            win(c)
             return c
 
         # declarative form for implicit process (functional - inside io iterator flow)
-        @wordwin.wordio
+        @win.wordio
         def word_process(w: word) -> word:
             # currently just displaying the length.
             w.wd = f"{len(w.wd)} ".encode(
                 "ascii"
             )  # reminder wd is bytes and we need to keep (or create!) separator
-            wordwin(w)  # simpler to address disply via window here instead of inside the WordInput class
+            win(w)  # simpler to address disply via window here instead of inside the WordInput class
             return w
 
 
+        @win.lineio
+        def line_process(l: line) -> line:
+            # move cursor to beginning of word and clean
+            # TODO: word processing upon ending when typing separator
+            # currently just displaying the length.
+            l.ln = f"{len(l.ln)} chars\n".encode(  # TODO : words for testing
+                "ascii"
+            )  # reminder wd is bytes and we need to keep separator
+            win(l)
+            return l
+
+        # TODO : because of word or line using different iterators we have to choose our pipeline...
+        #   how about combining them ???
         # imperative form for explicit process, (effects - outside of io flow)
-        for w in wordwin.wordio:
-            wordwin(w)
+        for l in win.lineio:
+            win(l)
 
     # win is cleaned and reset when exiting the context

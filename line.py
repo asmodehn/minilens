@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from char import CharInput, char
+from char import char
 from pipeline import Pipeline
 
 """
@@ -18,12 +18,17 @@ Also as a Pipeline to modify itself with operators on iterables
 from itertools import groupby
 from typing import Callable, Generator, Iterator, List
 
-from word import WordInput, word
+from word import word
 
 
 class line:
 
     __slots__ = ("stdscr", "yx", "ln")
+
+    # Note:
+    # - Char input, is a generator of (one) byte = int
+    # - Word input is a generator of bytes
+    # - line input is a generator of bytes (as lines), and is also a stream (following stream protocol).
 
     @classmethod
     def generate(
@@ -62,29 +67,6 @@ class line:
         return Pipeline(word.generate(chi=self.chars, separators=[32]))
 
 
-class LineInput(Pipeline):
-
-    # Note:
-    # - Char input, is a generator of (one) byte = int
-    # - Word input is a generator of bytes
-    # - line input is a generator of bytes (as lines), and is also a stream (following stream protocol).
-
-    def __init__(self, stdscr, char_pipeline: Pipeline[char], until: List[int]):
-        self.until = until
-        self.windex = 0
-        self.stdscr = stdscr
-
-        line_pipeline = line.generate(
-            chi=char_pipeline, separators=until
-        )
-        super(LineInput, self).__init__(line_pipeline)
-
-    def __call__(self, fun: Callable[[line], line]):
-        # applying the function to this iterator
-        # effectively making this a decorator
-        self.map(fun)
-
-
 if __name__ == "__main__":
     import curses
 
@@ -97,13 +79,13 @@ if __name__ == "__main__":
     # cbreak mode to not buffer keys
     curses.cbreak()
 
-    charin = CharInput(
+    charin = Pipeline(char.generate(
         call_position=stdscr.getyx,
         call_input=stdscr.getch,
         until=[
             4,  # EOT  via Ctrl-D
         ],
-    )
+    ))
 
     @charin
     def char_process(ch: char) -> char:
@@ -119,13 +101,12 @@ if __name__ == "__main__":
         return ch
 
 
-    linein = LineInput(
-        stdscr=stdscr,
-        char_pipeline=charin,
-        until=[
+    linein = Pipeline(line.generate(
+        chi=charin,
+        separators=[
             10,  # EOL  via Enter/Return ???
         ]
-    )
+    ))
 
 
     @linein

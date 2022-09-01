@@ -82,6 +82,11 @@ class Pipeline(Generic[T]):
         """
         self.gen = zip(self.gen, other)
 
+    def __call__(self, fun: Callable[[T], T]):
+        # applying the function to this iterator
+        # effectively making Pipeline[T] a decorator
+        self.map(fun)
+
     # itertools
 
     def filterfalse(self, pred) -> None:
