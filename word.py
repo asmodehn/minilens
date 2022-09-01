@@ -73,27 +73,8 @@ class WordInput(Pipeline):
 
     def __call__(self, fun: Callable[[word], word]):
         # applying the function to this iterator
-        # effectively making this a decorator (?)
-
-        def fun_wrapper(w: word) -> word:
-            # find beginning of word (may have moved if scrolled)
-            # if w.wd[-1] == ord(b"\n"):  # TODO : this should be managed in line / window instead
-            #     w.yx = w.yx[0] - 1, w.yx[1]  # remove one line
-            # TODO : manage scroll area in window...
-
-            # move cursor to beginning of word and clean
-            self.stdscr.move(*w.yx)
-            self.stdscr.clrtobot()  # to also clear when input is multiline
-            # Note: another option is to confine input to one line only, with filter()...
-
-            processed = fun(w)
-
-            # replace with processed
-            self.stdscr.addstr(processed.wd.decode("ascii"))
-
-            return processed
-
-        self.map(fun_wrapper)
+        # effectively making this a decorator
+        self.map(fun)
 
 
 if __name__ == "__main__":
@@ -146,10 +127,13 @@ if __name__ == "__main__":
 
     @wordin
     def word_process(w: word) -> word:
+        stdscr.move(*w.yx)
+        stdscr.clrtobot()
         # currently just displaying the length.
         w.wd = f"{len(w.wd)} ".encode(
             "ascii"
         )  # reminder wd is bytes and we need to keep (or create!) separator
+        stdscr.addstr(w.wd.decode("ascii"))
         return w
 
     # to loop through the iterator until the end

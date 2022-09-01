@@ -81,22 +81,8 @@ class LineInput(Pipeline):
 
     def __call__(self, fun: Callable[[line], line]):
         # applying the function to this iterator
-        # effectively making this a decorator (?)
-
-        def fun_wrapper(l: line) -> line:
-
-            # move cursor to beginning of word and clean
-            self.stdscr.move(*l.yx)
-            self.stdscr.clrtobot()
-
-            processed = fun(l)
-
-            # replace with processed
-            self.stdscr.addstr(str(processed))
-
-            return processed
-
-        self.map(fun_wrapper)
+        # effectively making this a decorator
+        self.map(fun)
 
 
 if __name__ == "__main__":
@@ -132,24 +118,6 @@ if __name__ == "__main__":
             stdscr.addch(ch.ch)
         return ch
 
-    wordin = WordInput(
-        stdscr=stdscr,
-        char_pipeline=charin,
-        until=[
-            32,  # EOW  via space
-            # 10,  # EOL  via Enter/Return ???
-        ],
-    )
-
-    @wordin
-    def word_process(w: word) -> word:
-        # TODO: word processing upon ending when typing separator
-        # currently just displaying the length.
-        w.wd = f"{len(w.wd)} ".encode(
-            "ascii"
-        )  # reminder wd is bytes and we need to keep separator
-        return w
-
 
     linein = LineInput(
         stdscr=stdscr,
@@ -162,11 +130,15 @@ if __name__ == "__main__":
 
     @linein
     def line_process(l: line) -> line:
+        # move cursor to beginning of word and clean
+        stdscr.move(*l.yx)
+        stdscr.clrtobot()
         # TODO: word processing upon ending when typing separator
         # currently just displaying the length.
         l.ln = f"{len(l.ln)} chars\n".encode(  # TODO : words for testing
             "ascii"
         )  # reminder wd is bytes and we need to keep separator
+        stdscr.addstr(str(l))
         return l
 
 

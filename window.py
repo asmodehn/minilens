@@ -37,12 +37,16 @@ class Window:
         # closing screen
         curses.endwin()
 
-    def __call__(self, output: int | str | char | word):
+    def __call__(self, output: int | str | char | word, clrtobot=True):
         if isinstance(output, word):
             self.stdscr.move(*output.yx)
+            if clrtobot:
+                self.stdscr.clrtobot()
             self.stdscr.addstr(output.wd)
         elif isinstance(output, char):
             self.stdscr.move(*output.yx)
+            if clrtobot:
+                self.stdscr.clrtobot()
             self.stdscr.addch(output.ch)
         # these seem to break semantics, as they depend on external state (cursor position)
         # elif isinstance(output, str):
@@ -72,6 +76,11 @@ class Window:
             ],
         )
 
+    # TODO : only one "input" function as decorator, inspecting argument type hint
+    #  to determine which iterator element to pass in the function
+
+    # TODO : line ? sentence as a set of words ??
+
 
 if __name__ == "__main__":
 
@@ -95,6 +104,13 @@ if __name__ == "__main__":
 
     with Window() as wordwin:
 
+        # COMMENT this to prevent char output while typing...
+        @wordwin.chario
+        def char_process(c: char) -> char:
+            # output as implicit #TODO : refine these...
+            wordwin(c)
+            return c
+
         # declarative form for implicit process (functional - inside io iterator flow)
         @wordwin.wordio
         def word_process(w: word) -> word:
@@ -102,6 +118,7 @@ if __name__ == "__main__":
             w.wd = f"{len(w.wd)} ".encode(
                 "ascii"
             )  # reminder wd is bytes and we need to keep (or create!) separator
+            wordwin(w)  # simpler to address disply via window here instead of inside the WordInput class
             return w
 
 
