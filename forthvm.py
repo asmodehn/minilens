@@ -2,83 +2,163 @@
 # -*- coding: utf-8 -*-
 ##############################################################################
 #
-# Copyright (c) 2010. José Dinuncio
+# A Python3 Forth - name TBD
+#
+# Copyright (c) 2022 Asmodehn
 # All Rights Reserved.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License.
 #
-# Modifications by @asmodehn
+# Inspirations:
+# - pyforth (pythonic) : https://github.com/jdinunzio/pyforth
+# - eforth (minimalist) : https://wiki.forth-ev.de/lib/exe/fetch.php/en:projects:430eforth:eforth_overview_one_page_code_extracted_v18a.odt
+# - jonesforth (didactic) : https://github.com/nornagon/jonesforth/blob/master/jonesforth.S
 ##############################################################################
+from __future__ import annotations
+
 import sys
 import inspect
+from typing import Callable, Iterable, List
 
 
-def word_(name="", imm=False):
-    """Word decorator for functions"""
-    def wr(fn, name=name, imm=imm):
-        if not name:
-            name = fn.__name__
-        word = Word(name, fn, imm)
-        return word
-    return wr
+class Word(Callable[[], None]):
 
-
-class Word:
     __slots__ = ("name", "code", "imm")
 
-    """A Forth Word"""
-    def __init__(self, name, code, imm=False):
-        self.name = name
-        self.code = code
-        self.imm = imm
-
-    def is_instruction(self):
-        """True is self.code is executable"""
-        return inspect.isroutine(self.code)
-
-    def get(self, i):
-        """Return the i-th word of this word"""
-        ### Investigation ongoing
-        if isinstance(self.code, str):
-            print("GET on char witnessed !!! Is this actually intended ???")
-        assert isinstance(self.code, list)  # the expected intent ??
-        ### Investigation end
-        return self.code[i]
+    def __call__(self):
+        # Python __call__() is how we implement running an instruction word
+        try:  # catching any unexpected problem...
+            self.code()
+        except Exception as exc:
+            raise RuntimeError(f"{self}.code: is not Callable ") from exc
 
     def __repr__(self):
         return f"{self.name}"
         # return f"Word({self.name}, {self.code}, {self.imm})"
 
 
-class PC:
-    __slots__ = ("word", "idx")
+class Primary(Word):
 
-    """The Program Counter"""
-    def __init__(self, word, idx=0):
-        self.word = word
-        self.idx = idx
+    """A Primary Forth Word
+    Forth Words are intimately related to the Inner Interpreter behavior.
 
-    def next(self):
-        """Returns the word pointed by the PC and increment it"""
-        v = self.this()
-        self.inc()
-        return v
+    Here in python a Word is a Callable[[],None] (no arguments, always returns None)
+    
+    However, if the word is a secondary word, it uses the inner interpreter to execute its own words
 
-    def this(self):
-        """Returns the word pointed by the PC"""
-        return self.word.get(self.idx)
+    """
 
-    def inc(self, x=1):
-        """Increments the PC"""
-        self.idx = self.idx + x
+    def __init__(self, name: str, code: Callable, imm: bool = False):
+        self.name = name
+        self.code = code
+        self.imm = imm
 
-    def __repr__(self):
-        return f"PC({self.word.name}, {self.idx})"
+    def is_primary(self):
+        """True is self.code is executable"""
+        return inspect.isroutine(self.code)
+
+    def __call__(self) -> None:
+        try:  # catching any unexpected problem...
+            self.code()
+        except Exception as exc:
+            raise RuntimeError(f"{self}.code: is not Callable ") from exc
+
+    def __eq__(self, other: Word):
+        return self.name == other.name and self.code == other.code and self.imm == other.imm
+
+
+def inner(fin: Iterable[Word]) -> None:
+    """ A compact inner interpreter in python,
+    We are here relying on the Word (Primary and Secondary) implementation as core callable and iterable python concepts
+    to be able to define an inner interpreter in a very simple form
+    """
+    # Note : we only start iterating here (in interpreter)
+    # But not in the (secondary) word definition...
+    for w in fin:  # for each word in input
+        # just call it
+        w()
+
+
+class Secondary(Word):
+
+    __slots__ = ("wthread",)
+
+    """A Forth Word
+    Forth Words are intimately related to the Inner Interpreter behavior.
+    
+    Here in python a Word is a Callable.
+    However if the word is a secondary word, it uses the inner interpreter to execute its own words
+    
+    """
+
+    wthread: List[Word]  # could theoretically be iterable, but List makes it easier to work with in python
+
+    def __init__(self, name: str, code: List[Word], imm: bool = False):
+        self.wthread = code  # points to an iterable (*not* an iterator before it is executed !)
+        self.name = name
+        self.code = self.__call__,  # points to its inner interpreter
+        self.imm = imm
+
+    def __len__(self) -> int:
+        return len(self.wthread)
+
+    def __getitem__(self, i):
+        """Return the i-th word of this word"""
+        return self.wthread[i]
+
+    def __call__(self) -> None:
+        """ Same call interface as primary word.
+        We are here relying on the inner interpreter only.
+
+        Note the iteration is only started at this stage (not before),
+        and it is specific for this call
+        """
+        return inner(iter(self))
+
+    def __eq__(self, other: Word):
+        if isinstance(other, Secondary):
+            return super().__eq__(other) and self.wthread == other.wthread
+        return False
+
+    def __iter__(self):
+        yield from self.wthread
+
+
+#TODO : vocabulary dict here (careful about multiple version fo same word ...
+
+
+
+
+class ForthException(Exception):
+    # Custom exception class for user error at the python level
+    pass
+
+
+def word_(name="", imm=False):
+    """Word decorator for simple word declaration"""
+    def wr(content):
+        nonlocal name, imm
+        if callable(content):
+            if not name:
+                name = content.__name__
+            word = Primary(name, content, imm)
+        elif isinstance(content, List):
+            word = Secondary(name, content, imm)
+        else:
+            raise ForthException(f"word {name}: {content} is not definable")
+        return word
+    return wr
 
 
 class Forth:
-    """Forth Virtual Machine"""
+    """Forth Virtual Machine
+
+    Design Decision Records:
+    - This should work on a stream of bytes (ASCII char by char), or stream of words (usual Forth)
+    since this is closest to how it will be used.
+
+    """
     def __init__(self, run=True, words=None, debug=False, fin=sys.stdin, fout=sys.stdout):
 
         self.stack = []
@@ -574,12 +654,12 @@ def exec_(forth):
     forth._exec(word)
 
 
-end = Word('end', None)
-bye = Word('bye', [end])
-colon = Word(':', [word, create, rbrac, exit], imm=True)
-semicolon = Word(';', [lit, exit, comma, lbrac, exit], imm=True)
+end = Primary('end', None)
+bye = Secondary('bye', [end])
+colon = Secondary(':', [word, create, rbrac, exit], imm=True)
+semicolon = Secondary(';', [lit, exit, comma, lbrac, exit], imm=True)
 
-interpret = Word('interpret',
+interpret = Secondary('interpret',
                  [
                      lbrac,
                      # ini
@@ -607,16 +687,30 @@ interpret = Word('interpret',
                      drop, exit                     # 30
                  ])
 
-init = Word('init', [interpret, exit])
+init = Secondary('init', [interpret, exit])
 
 if __name__ == '__main__':
-    import io
+    # Note : this uses raw mode of the terminal,
+    # so it might not work as expected if you are not using a proper terminal ...
 
-    # inbuf = io.StringIO()
-    #
-    # def lexer(fin=sys.stdin):
-    #     """ simple lexer to get one word at a time"""
-    #     for l in fin.readline():
-    #         yield from l.split()
+    import termios
+    import tty
 
-    forth = Forth(debug=True)
+    # set raw mode to be able to read a single character from a (~my ubuntu's) linux terminal
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        # because we want to catch Ctrl-C and signal to keep usual python behavior
+        custom_settings = termios.tcgetattr(fd)
+        custom_settings[tty.LFLAG] |= termios.ISIG  # to catch signals like Ctrl-C
+        custom_settings[tty.LFLAG] |= termios.ECHO  # to echo input characters as usual
+        custom_settings[tty.OFLAG] |= termios.OPOST  # to output as usual
+        custom_settings[tty.IFLAG] |= termios.ICRNL  # for usual return key behavior
+        termios.tcsetattr(fd, termios.TCSAFLUSH, custom_settings)
+
+        # start the Forth System
+        forth = Forth(debug=True, fin=sys.stdin)
+    finally:
+        # reset the original settings
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
